@@ -38,8 +38,38 @@ type handler struct {
 
 var (
 	serialsMu sync.Mutex
-	serials   = map[string]struct{}{}
+	serials   = map[string]*dualShock4SerialReservation{}
 )
+
+// The reservation pointer is an incarnation token, not just serial membership.
+// A rejected or stale stream must not release another stream/device's serial.
+type dualShock4SerialReservation struct {
+	owner *DualShock4
+}
+
+func claimDualShock4StreamSerial(ds4 *DualShock4) (string, *dualShock4SerialReservation, bool) {
+	ds4.mtx.Lock()
+	serial := ds4.metaState.SerialNumber
+	ds4.mtx.Unlock()
+	serialsMu.Lock()
+	defer serialsMu.Unlock()
+	if current := serials[serial]; current != nil && current.owner != ds4 {
+		return serial, nil, false
+	}
+	reservation := &dualShock4SerialReservation{owner: ds4}
+	serials[serial] = reservation
+	return serial, reservation, true
+}
+
+func releaseDualShock4Serial(serial string, reservation *dualShock4SerialReservation) bool {
+	serialsMu.Lock()
+	defer serialsMu.Unlock()
+	if reservation == nil || serials[serial] != reservation {
+		return false
+	}
+	delete(serials, serial)
+	return true
+}
 
 func (h *handler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
 	if o == nil {
@@ -67,21 +97,28 @@ func (h *handler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
 			}
 		}
 	}
+	if _, occupied := serials[serial]; occupied {
+		serialsMu.Unlock()
+		return nil, fmt.Errorf("no available DualShock4 serial reservation for %q", serial)
+	}
 	metaState.SerialNumber = serial
-	serials[serial] = struct{}{}
+	reservation := &dualShock4SerialReservation{}
+	serials[serial] = reservation
 	serialsMu.Unlock()
 	b, err := json.Marshal(metaState)
 	if err != nil {
+		releaseDualShock4Serial(serial, reservation)
 		return nil, fmt.Errorf("marshal meta state: %w", err)
 	}
 	o.DeviceSpecific = string(b)
 	ds4, err := New(o)
 	if err != nil {
-		serialsMu.Lock()
-		delete(serials, serial)
-		serialsMu.Unlock()
+		releaseDualShock4Serial(serial, reservation)
 		return nil, err
 	}
+	serialsMu.Lock()
+	reservation.owner = ds4
+	serialsMu.Unlock()
 	ds4.microphoneInput = h.microphoneInput
 	ds4.speakerOutput = h.speakerOutput
 	if h.audioOnly {
@@ -93,23 +130,6 @@ func (h *handler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
 
 func (h *handler) StreamHandler() api.StreamHandlerFunc {
 	return func(conn net.Conn, devPtr *usb.Device, logger *slog.Logger) error {
-		defer func() {
-			if devPtr == nil || *devPtr == nil {
-				return
-			}
-			ds4, ok := (*devPtr).(*DualShock4)
-			if !ok {
-				slog.Warn("device is not DualShock4 on disconnect")
-				return
-			}
-			ds4.mtx.Lock()
-			serial := ds4.metaState.SerialNumber
-			ds4.mtx.Unlock()
-			serialsMu.Lock()
-			delete(serials, serial)
-			serialsMu.Unlock()
-			slog.Debug("DS4 disconnected, serial released", "serial", serial)
-		}()
 		if devPtr == nil || *devPtr == nil {
 			return fmt.Errorf("nil device")
 		}
@@ -117,6 +137,9 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 		if !ok {
 			return fmt.Errorf("%w: expected DualShock4", device.ErrWrongDeviceType)
 		}
+		var serial string
+		var reservation *dualShock4SerialReservation
+		defer func() { releaseDualShock4Serial(serial, reservation) }()
 
 		microphoneInput := h.microphoneInput || ds4.microphoneInput
 		speakerOutput := h.speakerOutput || ds4.speakerOutput
@@ -132,23 +155,22 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 		var writer *dualShock4OutputWriter
 		if speakerOutput && streamFrameVersion == StreamFrameVersionV3 {
 			writer = newDualShock4OutputWriter(conn, streamFrameVersion)
-			ds4.SetOutputCallback(func(feedback OutputState) {
+			generation, registered := ds4.setFramedOutputCallbacks(func(feedback OutputState) bool {
 				data, err := feedback.MarshalBinary()
 				if err != nil {
 					logger.Error("failed to marshal feedback", "error", err)
-					return
+					return false
 				}
-				writer.EnqueueControl(StreamFrameOutputState, data)
-			})
-			ds4.SetSpeakerCallback(func(pcm []byte) {
+				return writer.EnqueueControl(StreamFrameOutputState, data)
+			}, func(pcm []byte) {
 				writer.EnqueueAudioOwned(StreamFrameSpeakerPCM, pcm)
-			})
-			ds4.SetSpeakerResetCallback(writer.ResetSpeaker)
+			}, writer.ResetSpeaker)
+			if !registered {
+				return fmt.Errorf("DualShock4 framed feedback transport is already owned or could not admit its initial state")
+			}
 			go writer.Run()
 			defer func() {
-				ds4.SetOutputCallback(nil)
-				ds4.SetSpeakerCallback(nil)
-				ds4.SetSpeakerResetCallback(nil)
+				ds4.clearFramedOutputCallbacks(generation)
 				writer.Stop()
 			}()
 		} else {
@@ -165,6 +187,13 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 			defer ds4.SetOutputCallback(nil)
 		}
 
+		// Claim only after callback admission succeeds. API reconnects wait for
+		// the old handler; this token also fences direct/stale handler cleanup.
+		var reserved bool
+		serial, reservation, reserved = claimDualShock4StreamSerial(ds4)
+		if !reserved {
+			return fmt.Errorf("DualShock4 serial %q is owned by another device", serial)
+		}
 		return readDualShock4InputStream(conn, ds4, logger,
 			microphoneInput, streamFrameVersion)
 	}
@@ -184,13 +213,26 @@ type dualShock4AudioBuffer struct {
 
 const dualShock4SpeakerResetWriteTimeout = 250 * time.Millisecond
 
+const dualShock4ControlCapacity = 32
+const dualShock4ControlPayloadLength = 7
+
+type dualShock4ControlFrame struct {
+	frameType byte
+	payload   [dualShock4ControlPayloadLength]byte
+}
+
 // dualShock4OutputWriter keeps USB isochronous completion independent from
 // local TCP backpressure. Control feedback and speaker PCM share one writer so
 // their framing sequence is strictly monotonic and conn.Write is never raced.
 type dualShock4OutputWriter struct {
 	conn            net.Conn
 	version         byte
-	control         chan dualShock4OutputFrame
+	controlReady    chan struct{}
+	controlMu       sync.Mutex
+	control         [dualShock4ControlCapacity]dualShock4ControlFrame
+	controlRead     int
+	controlCount    int
+	repeatableTail  bool
 	audio           chan dualShock4OutputFrame
 	stop            chan struct{}
 	done            chan struct{}
@@ -207,25 +249,74 @@ type dualShock4OutputWriter struct {
 func newDualShock4OutputWriter(conn net.Conn, version byte) *dualShock4OutputWriter {
 	return &dualShock4OutputWriter{
 		conn: conn, version: version,
-		control: make(chan dualShock4OutputFrame, 32),
-		audio:   make(chan dualShock4OutputFrame, 256),
-		stop:    make(chan struct{}), done: make(chan struct{}),
+		controlReady: make(chan struct{}, 1),
+		audio:        make(chan dualShock4OutputFrame, 256),
+		stop:         make(chan struct{}), done: make(chan struct{}),
 	}
 }
 
-func (w *dualShock4OutputWriter) EnqueueControl(frameType byte, payload []byte) {
-	if len(payload) == 0 {
-		return
+func (w *dualShock4OutputWriter) EnqueueControl(frameType byte, payload []byte) bool {
+	if frameType != StreamFrameOutputState || len(payload) != dualShock4ControlPayloadLength {
+		return false
 	}
 	w.enqueueLock.RLock()
 	defer w.enqueueLock.RUnlock()
 	if w.stopped {
-		return
+		return false
 	}
-	w.enqueueFrameLocked(w.control, dualShock4OutputFrame{
-		frameType: frameType,
-		payload:   append([]byte(nil), payload...),
-	})
+	var candidate dualShock4ControlFrame
+	candidate.frameType = frameType
+	copy(candidate.payload[:], payload)
+	w.controlMu.Lock()
+	defer w.controlMu.Unlock()
+	// Blink timing is not proven idempotent. Only identical static complete
+	// states at an unclaimed pending tail may share a slot; A/B/A survives.
+	repeatable := payload[5] == 0 && payload[6] == 0
+	if repeatable && w.repeatableTail && w.controlCount > 0 {
+		tail := (w.controlRead + w.controlCount - 1) % len(w.control)
+		if w.control[tail] == candidate {
+			return true
+		}
+	}
+	// Reserve one slot for an explicit motor-zero, including its exact LED
+	// changes. Full distinct overload is rejected before ownership/USB success;
+	// an accepted command is never overwritten and no callback waits for I/O.
+	neutral := payload[0] == 0 && payload[1] == 0
+	if w.controlCount == len(w.control) || !neutral && w.controlCount >= len(w.control)-1 {
+		return false
+	}
+	tail := (w.controlRead + w.controlCount) % len(w.control)
+	w.control[tail] = candidate
+	w.controlCount++
+	w.repeatableTail = repeatable
+	select {
+	case w.controlReady <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+func (w *dualShock4OutputWriter) takeControl(destination []byte) (byte, bool) {
+	w.controlMu.Lock()
+	defer w.controlMu.Unlock()
+	if w.controlCount == 0 || len(destination) < dualShock4ControlPayloadLength {
+		return 0, false
+	}
+	frame := w.control[w.controlRead]
+	copy(destination, frame.payload[:])
+	w.control[w.controlRead] = dualShock4ControlFrame{}
+	w.controlRead = (w.controlRead + 1) % len(w.control)
+	w.controlCount--
+	if w.controlCount == 0 {
+		w.repeatableTail = false
+	}
+	return frame.frameType, true
+}
+
+func (w *dualShock4OutputWriter) breakControlRepeat() {
+	w.controlMu.Lock()
+	w.repeatableTail = false
+	w.controlMu.Unlock()
 }
 
 func (w *dualShock4OutputWriter) EnqueueAudio(frameType byte, payload []byte) {
@@ -237,6 +328,7 @@ func (w *dualShock4OutputWriter) EnqueueAudio(frameType byte, payload []byte) {
 	if w.stopped {
 		return
 	}
+	w.breakControlRepeat()
 	var buffer *dualShock4AudioBuffer
 	if value := w.audioPool.Get(); value != nil {
 		buffer = value.(*dualShock4AudioBuffer)
@@ -271,6 +363,7 @@ func (w *dualShock4OutputWriter) EnqueueAudioOwned(frameType byte, payload []byt
 	if w.stopped {
 		return
 	}
+	w.breakControlRepeat()
 	w.enqueueFrameLocked(w.audio, dualShock4OutputFrame{
 		frameType: frameType, payload: payload, audio: true,
 		generation: w.audioGeneration.Load(),
@@ -299,24 +392,25 @@ func (w *dualShock4OutputWriter) Run() {
 		w.drainAudioQueue()
 		close(w.done)
 	}()
+	var controlPayload [dualShock4ControlPayloadLength]byte
 	for {
-		// Give feedback priority without starving speaker packets.
 		select {
-		case frame := <-w.control:
-			if !w.writeAndRelease(frame) {
+		case <-w.stop:
+			return
+		default:
+		}
+		// Retain the existing control priority; admission adds no timed delay.
+		if frameType, present := w.takeControl(controlPayload[:]); present {
+			if !w.write(dualShock4OutputFrame{frameType: frameType, payload: controlPayload[:]}) {
 				return
 			}
 			continue
-		default:
 		}
 
 		select {
 		case <-w.stop:
 			return
-		case frame := <-w.control:
-			if !w.writeAndRelease(frame) {
-				return
-			}
+		case <-w.controlReady:
 		case frame := <-w.audio:
 			if !w.writeAndRelease(frame) {
 				return
@@ -345,6 +439,7 @@ func (w *dualShock4OutputWriter) writeAndRelease(frame dualShock4OutputFrame) bo
 // before the interface or endpoint reset can appear on the client stream.
 func (w *dualShock4OutputWriter) ResetSpeaker() {
 	w.enqueueLock.Lock()
+	w.breakControlRepeat()
 	w.audioGeneration.Add(1)
 	w.drainAudioQueue()
 	w.enqueueLock.Unlock()
@@ -456,6 +551,12 @@ func (w *dualShock4OutputWriter) requestStop() {
 	w.stopOnce.Do(func() {
 		w.enqueueLock.Lock()
 		w.stopped = true
+		w.controlMu.Lock()
+		clear(w.control[:])
+		w.controlRead = 0
+		w.controlCount = 0
+		w.repeatableTail = false
+		w.controlMu.Unlock()
 		close(w.stop)
 		w.enqueueLock.Unlock()
 	})

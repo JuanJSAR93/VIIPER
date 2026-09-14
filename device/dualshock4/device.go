@@ -28,12 +28,15 @@ type DualShock4 struct {
 	inputPublishMu sync.Mutex
 	metaState      *MetaState
 
-	outputFunc       func(OutputState)
-	speakerFunc      func([]byte)
-	speakerResetFunc func()
-	outputState      OutputState
-	outputSeen       bool
-	descriptor       usb.Descriptor
+	outputFunc               func(OutputState)
+	speakerFunc              func([]byte)
+	speakerResetFunc         func()
+	outputState              OutputState
+	outputSeen               bool
+	descriptor               usb.Descriptor
+	transportOutputFunc      func(OutputState) bool
+	outputCallbackGeneration uint64
+	nextOutputGeneration     uint64
 
 	probeSelector       [3]byte
 	telemetrySubcommand byte
@@ -145,6 +148,81 @@ func (d *DualShock4) SetOutputCallback(f func(OutputState)) {
 	if replay {
 		f(latest)
 	}
+}
+
+// The framed sink performs bounded admission only, never socket I/O. Register
+// its output/audio/reset callbacks together; stale cleanup cannot clear a new
+// transport. The original public legacy callback remains unchanged.
+func (d *DualShock4) setFramedOutputCallbacks(output func(OutputState) bool,
+	speaker func([]byte), reset func()) (uint64, bool) {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+	if output == nil || d.transportOutputFunc != nil || d.nextOutputGeneration == ^uint64(0) {
+		return 0, false
+	}
+	if d.outputSeen && !output(d.outputState) {
+		return 0, false
+	}
+	d.nextOutputGeneration++
+	d.outputCallbackGeneration = d.nextOutputGeneration
+	d.transportOutputFunc = output
+	d.speakerFunc = speaker
+	d.speakerResetFunc = reset
+	return d.outputCallbackGeneration, true
+}
+
+func (d *DualShock4) clearFramedOutputCallbacks(generation uint64) bool {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+	if generation == 0 || generation != d.outputCallbackGeneration {
+		return false
+	}
+	d.transportOutputFunc = nil
+	d.speakerFunc = nil
+	d.speakerResetFunc = nil
+	d.outputCallbackGeneration = 0
+	return true
+}
+
+// TryHandleOutputCommand uses the existing USB/IP admission contract: a full
+// distinct-command queue is ENOSPC with zero actual length, not false success.
+// Host retry is not guaranteed. Legacy/nonframed modes retain their old route.
+func (d *DualShock4) TryHandleOutputCommand(endpoint uint8,
+	setup [8]byte, data []byte) (handled, accepted bool) {
+	if endpoint == EndpointOut&0x0f {
+		return d.tryAdmitFramedOutput(data)
+	}
+	if endpoint != 0 || setup[0] != hidClassOUT || setup[1] != hidSetReport ||
+		binary.LittleEndian.Uint16(setup[2:4]) != uint16(reportTypeOutput)<<8|uint16(ReportIDOutput) {
+		return false, false
+	}
+	interfaceNumber := binary.LittleEndian.Uint16(setup[4:6])
+	if interfaceNumber > 0xff || int(binary.LittleEndian.Uint16(setup[6:8])) != len(data) {
+		return false, false
+	}
+	iface, exists := d.descriptor.Interface(uint8(interfaceNumber))
+	if !exists || iface.Descriptor.BInterfaceClass != 0x03 {
+		return false, false
+	}
+	return d.tryAdmitFramedOutput(data)
+}
+
+func (d *DualShock4) tryAdmitFramedOutput(data []byte) (handled, accepted bool) {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+	if d.transportOutputFunc == nil {
+		return false, false
+	}
+	if len(data) < 11 || data[0] != ReportIDOutput {
+		return true, false
+	}
+	feedback := parseOutputReport(data)
+	if !d.transportOutputFunc(feedback) {
+		return true, false
+	}
+	d.outputState = feedback
+	d.outputSeen = true
+	return true, true
 }
 
 func (d *DualShock4) SetSpeakerCallback(f func([]byte)) {
@@ -307,6 +385,9 @@ func (d *DualShock4) HandleTransfer(ctx context.Context, ep uint32, dir uint32, 
 	}
 
 	if dir == usbip.DirOut && epNumber == EndpointOut&0x0F {
+		if handled, _ := d.tryAdmitFramedOutput(out); handled {
+			return nil
+		}
 		if len(out) >= 11 && out[0] == ReportIDOutput {
 			feedback := parseOutputReport(out)
 			d.mtx.Lock()
@@ -466,6 +547,9 @@ func (d *DualShock4) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex
 				}
 				return nil, true
 			case reportType == reportTypeOutput && reportID == ReportIDOutput && len(data) >= 11:
+				if handled, accepted := d.tryAdmitFramedOutput(data); handled {
+					return nil, accepted
+				}
 				feedback := parseOutputReport(data)
 				d.mtx.Lock()
 				d.outputState = feedback
