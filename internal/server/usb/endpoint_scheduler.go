@@ -703,8 +703,9 @@ func (w *endpointWorker) beginSideEffect(idx int) bool {
 
 // phaseDeadline returns the absolute service deadline for a job phase. A
 // phase is one interrupt opportunity, one ISO packet slot, or the ISO URB's
-// completion boundary. Ordinary sub-interval jitter keeps the planned clock;
-// lateness of a complete interval re-anchors this and all later reservations.
+// completion boundary. Interrupt and ISO-IN service retain their per-packet
+// lateness policy. ISO-OUT has already handed its copied samples to the device
+// at phase zero: a late completion must not stretch the remaining sample clock.
 func (w *endpointWorker) phaseDeadline(idx, phase int, now time.Time) (time.Time, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -719,7 +720,20 @@ func (w *endpointWorker) phaseDeadline(idx, phase int, now time.Time) (time.Time
 	if lateness := now.Sub(deadline); lateness > 0 {
 		w.telemetry.lateness.record(lateness)
 	}
-	if w.interval > 0 && now.Sub(deadline) >= w.interval {
+	reanchorAfter := w.interval
+	if w.kind == isoOutWorker {
+		if phase > 0 {
+			// RET_SUBMIT acknowledges a window already processed at its start.
+			// Moving future windows here would accumulate timer/response jitter
+			// as permanent audio delay. The next job checks its own start below.
+			return deadline, true
+		}
+		// Recover within this reserved audio window without changing sample
+		// order or its completion boundary. If the whole window has expired,
+		// re-anchor once instead of publishing an unbounded catch-up burst.
+		reanchorAfter = max(w.interval, job.duration)
+	}
+	if reanchorAfter > 0 && now.Sub(deadline) >= reanchorAfter {
 		shift := now.Sub(deadline)
 		job.serviceAt = job.serviceAt.Add(shift)
 		job.serviceEnd = job.serviceEnd.Add(shift)
@@ -755,8 +769,8 @@ func (w *endpointWorker) waitForPhase(timer *time.Timer, idx, phase int) bool {
 			continue
 		case endpointWaitDeadline:
 			// Timer delivery itself may be delayed by scheduler jitter. Re-evaluate
-			// against the actual wake time so a delay of one complete interval
-			// re-anchors later reservations instead of replaying an expired slot.
+			// against the actual wake time using this worker's packet/window
+			// policy, rather than treating timer delivery as an on-time service.
 			wokeAt := w.clock.Now()
 			adjusted, active := w.phaseDeadline(idx, phase, wokeAt)
 			if !active {
