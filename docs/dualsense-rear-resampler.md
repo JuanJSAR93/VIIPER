@@ -1,0 +1,89 @@
+# Fixed-rate Sony rear PCM conversion
+
+`device/dualsense/rear_sinc64.go` is a bounded, pure-Go port of the public
+Cockos WDL sinc resampler at revision
+`8f4d783de745126ac8c201455dc30818c8613324`. It is not PadSense code and is not
+the original WDL implementation. The [original license](licenses/WDL-resampler.txt)
+and attribution are preserved.
+
+Primary source: [Cockos WDL](https://www.cockos.com/wdl/) and its
+[official resample.cpp](https://github.com/justinfrankel/WDL/blob/8f4d783de745126ac8c201455dc30818c8613324/WDL/resample.cpp).
+
+## Numerical contract
+
+The independently compiled, unmodified WDL oracle uses
+`SetMode(true, 0, true, 64, 32)`, `SetRates(48000, 3000)`, and continuous input
+feeding. Signed source samples are divided by 32768; WDL's double-precision
+stereo samples and float32 filter coefficients are retained. Output is multiplied
+by 128, truncated toward zero, and saturated to signed 8-bit range.
+
+For the exact integer ratio, WDL selects its ideal phase table. The 64 coefficient
+bits are pinned from that public table, avoiding platform-specific libm changes
+when generating its Blackman-Harris-windowed sinc kernel. The cutoff factor is
+`1/(16*1.03)`. Per channel, the Go port preserves the separate even/odd summation
+order of WDL's stereo SSE2 `SincSample2N`, then adds odd+even.
+
+The source history starts with 31 zero frames. Output sample *n* is centered at
+source frame `16*n` and uses source context [-31,+32]. WDL's availability guard
+requires two additional actual frames: first output after 35 source frames,
+then one after each 16. A complete 32-frame stereo output block therefore first
+becomes available at source frame count 531, then every 512 frames. The caller
+must retain partial blocks across source URB and speaker boundaries. Do not
+reset or zero-pad the converter at each 512-frame boundary.
+
+`Reset` discards all filter history, phase, and pending tail. Stream stop/reset
+must also retire the caller's partial output block; no synthetic tail is flushed.
+The converter owns no queue, goroutine, clock, platform API, or mutable global
+stream state. Its steady-state append path allocates zero memory. Existing
+Nintendo consumers of the legacy converted rear stream must not be silently
+changed by choosing this Sony-specific conversion.
+
+## Create-time negotiation and compatibility
+
+The existing DualSense/Edge audio-capable create API accepts
+`deviceSpecific.hapticsConverter: "sony-bt-wdl-sinc64-v1"`. Omission retains
+`box16`, including all legacy, events, and raw-input endpoint aliases. The
+create/list response reports the actual immutable selection as
+`deviceSpecific.hapticsConverter`. Unknown values and explicit converter
+options on gamepad-only endpoints are rejected before reserving an identity.
+Mutable identity metadata cannot change the converter mid-stream.
+
+Clients must request this conversion only for a compatible physical Sony
+Bluetooth recipient, check the actual response, and recreate rather than
+reuse that virtual device for a recipient requiring the legacy conversion.
+Older brokers ignore this option and omit the response field: that means
+legacy conversion, not successful negotiation. The selection does not change
+USB descriptors, input cadence, speaker PCM, native output validity, trigger
+ownership, or queue policies. A complete rear block is published immediately
+when its last required source frame arrives; no new scheduling timer is added.
+
+## Independent validation
+
+External PadSense capture analysis used only USB/IP rear-channel PCM and physical
+Bluetooth output packets, plus its ordinary third-party license notice naming
+WDL. No proprietary binary inspection was used.
+
+- Gameplay: all 172,864 scalar samples in 2,701 blocks, including 1,016 nonzero
+  blocks, matched this fixed WDL configuration exactly at one global phase.
+- Independent rear-only probe: independent L/R tones, PRBS, opposite chirps,
+  signed impulses at all 16 source phases, and silence matched all 66,112
+  overlapping scalar samples exactly. Its fresh physical stream had one leading
+  silent 32-frame carrier; this single global offset was established independently
+  by both channels. That leading silence and the final non-overlapping silent
+  tail were explicitly excluded, not matched by per-block shifts.
+- The oracle produced byte-identical float64 streams for continuous source
+  chunks of 1, 48, 240, 480, 512, 1024, and 4096 frames. This confirms state is
+  continuous rather than reset at packet boundaries.
+
+The checked-in `testdata/rear_sinc64_wdl_golden.json` contains independently
+generated synthetic input and expected bytes from the original C++ oracle. It
+covers phase impulses, unrelated stereo PRBS, opposing chirps, signed threshold
+plateaux, full-scale transitions, and silence. Its hashes, upstream revision,
+oracle hash, and generator hash are recorded in the fixture. The expected output
+is not generated by the Go code under test. Additional tests cover exact startup
+and block boundaries, reset at partial phases, sign/truncation/clipping, and zero
+steady-state allocations.
+
+Digital equality does not claim equal speaker encoding, actuator motion,
+perceptual response, or end-to-end latency. Host carrier startup scheduling is
+separate from conversion math.

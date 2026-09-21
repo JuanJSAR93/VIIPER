@@ -100,6 +100,10 @@ type DualSense struct {
 	realtimeHapticsInterval             uint8
 	hapticsPCM                          [BluetoothHapticsSampleSize / 2 * USBHapticsAudioDownsample * USBHapticsAudioFrameSize]byte
 	hapticsPCMLength                    int
+	hapticsConverter                    string
+	sonyRear                            sonyRearResampler
+	sonyRearSample                      [BluetoothHapticsSampleSize]byte
+	sonyRearSampleLength                int
 	v5SpeakerPCM                        [dualSenseV5SpeakerPayloadSize]byte
 	v5SpeakerPCMLength                  int
 	v5HapticsQueue                      [8]dualSenseV5HapticsGeneration
@@ -145,6 +149,7 @@ func NewEdge(o *device.CreateOptions) (*DualSense, error) {
 }
 
 func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
+	hapticsConverter := legacyRearHapticsConverter
 	metaState := &MetaState{
 		SerialNumber:       DefaultSerialNumberDS,
 		MACAddress:         DefaultMACAddressDS,
@@ -161,10 +166,14 @@ func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
 		metaState.Board = DefaultBoardStringEdge
 	}
 	if o != nil && o.DeviceSpecific != "" {
-		var newMeta MetaState
+		var newMeta dualSenseCreateState
 		err := json.Unmarshal([]byte(o.DeviceSpecific), &newMeta)
 		if err != nil {
 			return nil, fmt.Errorf("invalid JSON payload: %w", err)
+		}
+		hapticsConverter, err = selectRearHapticsConverter(newMeta.HapticsConverter, false)
+		if err != nil {
+			return nil, err
 		}
 		if newMeta.SerialNumber != "" {
 			metaState.SerialNumber = newMeta.SerialNumber
@@ -191,6 +200,7 @@ func new(o *device.CreateOptions, edge bool) (*DualSense, error) {
 	}
 
 	d := &DualSense{
+		hapticsConverter:       hapticsConverter,
 		deviceType:             DeviceTypeCombinedAudioDuplexV5,
 		descriptor:             makeDescriptor(edge),
 		metaState:              metaState,
@@ -258,7 +268,8 @@ func (d *DualSense) SetOutputCallback(f func(OutputState)) {
 // callback contains native feedback and one front-channel PCM generation.
 // The V5 contract emits exactly 480
 // raw 48 kHz speaker frames and consumes one independently completed rear
-// haptics sample, or silence when that 512-frame lane has not completed yet.
+// haptics sample, or silence when that lane has not completed yet. The explicit
+// Sony converter includes its initial lookahead; the legacy lane is unchanged.
 func (d *DualSense) SetAtomicAudioHapticsCallback(f func(OutputState, []byte)) {
 	d.callbackMu.Lock()
 	d.atomicAudioHapticsFunc = f
@@ -266,8 +277,9 @@ func (d *DualSense) SetAtomicAudioHapticsCallback(f func(OutputState, []byte)) {
 }
 
 // SetRealtimeHapticsCallback installs the V5 rear-channel consumer. A
-// callback is issued as soon as one complete 512-frame haptics interval is
-// available, independently of the 480-frame speaker clock.
+// callback is issued as soon as one complete 32-frame output block is
+// available, independently of the 480-frame speaker clock. The Sony sinc
+// converter retains its history across these blocks; no extra timer is used.
 func (d *DualSense) SetRealtimeHapticsCallback(f func(OutputState)) {
 	d.callbackMu.Lock()
 	d.realtimeHapticsFunc = f
@@ -472,6 +484,7 @@ func (d *DualSense) GetDeviceSpecificArgs() map[string]any {
 		return map[string]any{}
 	}
 	res["speakerInterfaceActive"] = speakerInterfaceActive
+	res["hapticsConverter"] = d.hapticsConverter
 	speakerState := speakerTelemetry.snapshot()
 	res["speakerStreamActive"] = speakerState.Active
 	res["speakerPayloadsReceived"] = speakerState.ReceivedPayloads
@@ -652,6 +665,9 @@ func (d *DualSense) resetSpeakerAudioLocked() uint64 {
 		d.speakerMediaGeneration = 1
 	}
 	d.hapticsPCMLength = 0
+	d.sonyRear.Reset()
+	d.sonyRearSample = [BluetoothHapticsSampleSize]byte{}
+	d.sonyRearSampleLength = 0
 	d.v5SpeakerPCMLength = 0
 	for index := range d.v5HapticsQueue {
 		d.v5HapticsQueue[index] = dualSenseV5HapticsGeneration{}
@@ -1079,7 +1095,9 @@ type dualSenseV5HapticsGeneration struct {
 
 // consumeDualSenseV5AudioLocked advances the native USB stream in source
 // order while keeping its two media clocks independent. Front stereo is
-// published every 480 frames. Rear haptics completes every 512 frames and is
+// published every 480 frames. Legacy rear haptics completes every 512 frames;
+// the explicitly selected Sony sinc path needs 531 frames for its first
+// block (including filter lookahead), then 512 frames for each later block. It is
 // queued independently. At each speaker boundary, exactly one completed rear
 // sample is consumed; if none is ready, V5 sends silence rather than
 // replaying the previous sample. State and report counters are rebuilt at that
@@ -1097,15 +1115,32 @@ func (d *DualSense) consumeDualSenseV5AudioLocked(src []byte, now time.Time,
 		d.v5SpeakerPCMLength/dualSenseV5SpeakerFrameSize
 	hapticsFramesNeeded := hapticsFrames -
 		d.hapticsPCMLength/USBHapticsAudioFrameSize
+	sonySinc := d.hapticsConverter == sonyRearHapticsConverter
+	if sonySinc {
+		remaining := (BluetoothHapticsSampleSize - d.sonyRearSampleLength) / 2
+		hapticsFramesNeeded = d.sonyRear.framesUntilOutput() + (remaining-1)*USBHapticsAudioDownsample
+	}
 	frames := min(framesRemaining, speakerFramesNeeded, hapticsFramesNeeded)
 	segmentBytes := frames * USBHapticsAudioFrameSize
 	segment := src[:segmentBytes]
 
-	if d.hapticsPCMLength == 0 {
+	if d.hapticsPCMStartedAt.IsZero() {
 		d.hapticsPCMStartedAt = now
 	}
-	copy(d.hapticsPCM[d.hapticsPCMLength:], segment)
-	d.hapticsPCMLength += segmentBytes
+	if sonySinc {
+		for offset := 0; offset < len(segment); offset += USBHapticsAudioFrameSize {
+			left := int16(binary.LittleEndian.Uint16(segment[offset+4 : offset+6]))
+			right := int16(binary.LittleEndian.Uint16(segment[offset+6 : offset+8]))
+			if l, r, ready := d.sonyRear.Append(left, right); ready {
+				d.sonyRearSample[d.sonyRearSampleLength] = byte(l)
+				d.sonyRearSample[d.sonyRearSampleLength+1] = byte(r)
+				d.sonyRearSampleLength += 2
+			}
+		}
+	} else {
+		copy(d.hapticsPCM[d.hapticsPCMLength:], segment)
+		d.hapticsPCMLength += segmentBytes
+	}
 	speakerBytes := frames * dualSenseV5SpeakerFrameSize
 	copyDualSenseV5SpeakerChannels(
 		d.v5SpeakerPCM[d.v5SpeakerPCMLength:d.v5SpeakerPCMLength+speakerBytes],
@@ -1114,9 +1149,10 @@ func (d *DualSense) consumeDualSenseV5AudioLocked(src []byte, now time.Time,
 	d.v5SpeakerPCMLength += speakerBytes
 
 	reportCount := 0
-	// At the 7,680-frame common boundary, complete rear feedback first so the
-	// simultaneous speaker generation carries that exact update.
-	if d.hapticsPCMLength == len(d.hapticsPCM) {
+	// Complete rear feedback first if both clocks reach a boundary together.
+	// Do not pad, replay, or reset the sinc history at a speaker boundary.
+	if (sonySinc && d.sonyRearSampleLength == BluetoothHapticsSampleSize) ||
+		(!sonySinc && d.hapticsPCMLength == len(d.hapticsPCM)) {
 		generation := d.completeDualSenseV5HapticsLocked(now)
 		if feedback, ok := d.buildDualSenseV5RealtimeHapticsLocked(
 			generation.sample[:]); ok {
@@ -1171,8 +1207,13 @@ func (d *DualSense) buildDualSenseV5RealtimeHapticsLocked(
 func (d *DualSense) completeDualSenseV5HapticsLocked(
 	now time.Time) dualSenseV5HapticsGeneration {
 	generation := dualSenseV5HapticsGeneration{}
-	copyUSBHapticsChannelsToBluetoothSample(generation.sample[:],
-		d.hapticsPCM[:d.hapticsPCMLength])
+	if d.hapticsConverter == sonyRearHapticsConverter {
+		generation.sample = d.sonyRearSample
+		d.sonyRearSampleLength = 0
+	} else {
+		copyUSBHapticsChannelsToBluetoothSample(generation.sample[:],
+			d.hapticsPCM[:d.hapticsPCMLength])
+	}
 	generation.assemblyDelay = now.Sub(d.hapticsPCMStartedAt)
 	if d.hapticsPCMStartedAt.IsZero() || generation.assemblyDelay < 0 {
 		generation.assemblyDelay = 0

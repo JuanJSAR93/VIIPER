@@ -45,13 +45,17 @@ func (h *dshandler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
 		o = &device.CreateOptions{}
 	}
 
-	metaState := MetaState{
-		ShellColor: DefaultShellColor,
+	metaState := dualSenseCreateState{
+		MetaState: MetaState{ShellColor: DefaultShellColor},
 	}
 	if o.DeviceSpecific != "" {
 		if err := json.Unmarshal([]byte(o.DeviceSpecific), &metaState); err != nil {
 			return nil, fmt.Errorf("invalid device specific JSON: %w", err)
 		}
+	}
+
+	if _, err := selectRearHapticsConverter(metaState.HapticsConverter, h.gamepadOnly); err != nil {
+		return nil, err
 	}
 
 	serial := metaState.SerialNumber
