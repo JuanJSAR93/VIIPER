@@ -16,14 +16,16 @@ Most command-line flags have corresponding environment variables for easier depl
 | `VIIPER_LOG_FILE` | `--log.file` | (none) | Log file path (logs only to console if not set) |
 | `VIIPER_LOG_RAW_FILE` | `--log.raw-file` | (none) | Raw packet log file path |
 
-### Legacy update setting
+### Privacy and update checks
 
-VIIPER no longer checks for, downloads, or installs its own updates. The update
-dialog and its installer action have been removed. The legacy `--update-notify`
-flag, `VIIPER_UPDATE_NOTIFY` environment variable, and saved configuration values
-are still accepted for compatibility, but are ignored and normalize to `none`.
-No update-dismissal file is read or written; existing files are left untouched.
-The tray's normal startup-registration and Quit actions are unchanged.
+VIIPER contains no update checker, update dialog, self-update installer, or
+outbound telemetry client. It does not contact GitHub or another vendor service
+at startup. The runtime only uses the endpoints explicitly configured for the
+local API, USB/IP, proxy, and authenticated clients.
+
+The old `--update-notify` flag and `VIIPER_UPDATE_NOTIFY` environment variable
+are no longer accepted. Existing configuration files must remove the obsolete
+`update_notify` key.
 
 ### Server Configuration
 

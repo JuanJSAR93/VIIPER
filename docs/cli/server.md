@@ -61,8 +61,8 @@ Example for a separately managed local lab (PowerShell):
 .\viiper.exe --config-only --config 'C:\Lab\server.json' --log.file='' --log.raw-file='' server --key-file 'C:\Lab\lab-data\viiper.key.txt' --usb.addr=127.0.0.1:3241 --api.addr=127.0.0.1:3242 --api.require-local-host-auth=true
 ```
 
-VIIPER has no built-in update checks, update dialog, or self-update installer;
-legacy `--update-notify` values are accepted but ignored. `--config-only`
+VIIPER has no built-in update checks, update dialog, self-update installer, or
+outbound telemetry client. `--config-only`
 requires exactly one explicit absolute `--config` file and
 never loads working-directory, user, or system fallback files. Missing,
 unreadable, or malformed files fail before logger/server startup. Without
