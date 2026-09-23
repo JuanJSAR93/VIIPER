@@ -18,7 +18,7 @@ import (
 )
 
 // Configuration selection precedes Kong configuration loading, logger creation,
-// update checks, and server startup. Only a command-line opt-in may narrow it.
+// and server startup. Only a command-line opt-in may narrow it.
 func configurationOptions(args []string) ([]kong.Option, bool, error) {
 	path, only, err := exclusiveConfigArgument(args)
 	if err != nil {

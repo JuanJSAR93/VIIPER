@@ -16,6 +16,15 @@ Most command-line flags have corresponding environment variables for easier depl
 | `VIIPER_LOG_FILE` | `--log.file` | (none) | Log file path (logs only to console if not set) |
 | `VIIPER_LOG_RAW_FILE` | `--log.raw-file` | (none) | Raw packet log file path |
 
+### Legacy update setting
+
+VIIPER no longer checks for, downloads, or installs its own updates. The update
+dialog and its installer action have been removed. The legacy `--update-notify`
+flag, `VIIPER_UPDATE_NOTIFY` environment variable, and saved configuration values
+are still accepted for compatibility, but are ignored and normalize to `none`.
+No update-dismissal file is read or written; existing files are left untouched.
+The tray's normal startup-registration and Quit actions are unchanged.
+
 ### Server Configuration
 
 | Environment Variable | CLI Flag | Default | Description |
@@ -63,7 +72,7 @@ exactly one command-line `--config` specifying an absolute `.json`, `.yaml`,
 `.yml`, or `.toml` file:
 
 ```powershell
-.\viiper.exe --config-only --config 'C:\Lab\server.json' --update-notify=none server
+.\viiper.exe --config-only --config 'C:\Lab\server.json' server
 ```
 
 The file must already exist, be a readable regular file with no linked/reparse
@@ -72,7 +81,7 @@ file fails closed; no fallback location is consulted. JSON and YAML must contain
 one document with an object/mapping root. `VIIPER_CONFIG` alone does not satisfy
 this explicit selection. Environment variables and other CLI flags still override
 values in the chosen file. This is not whole-server isolation: use an explicit
-key file, disable update checks, and control log destinations separately.
+key file and control log destinations separately.
 
 If --config is not provided, VIIPER will search for configuration in this order and first-found is used for each format:
 
@@ -107,9 +116,9 @@ An optional `server --key-file <absolute-path>` selects a deployment-owned key
 file without reading or writing the default password location. Explicit invalid,
 unreadable, or empty key files fail closed; only a missing file is generated,
 using exclusive creation so an existing key cannot be overwritten. This does
-not isolate other configuration, logging, update-cache, or tray-startup behavior.
+not isolate other configuration, logging, or tray-startup behavior.
 See [the server key-file option](server.md#--key-file) for a local lab example and
-the limits of `--config` and `--update-notify=none`.
+the limits of `--config` and `--config-only`.
 
 ### Localhost Exemption
 
