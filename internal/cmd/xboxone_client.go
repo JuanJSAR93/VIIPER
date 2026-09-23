@@ -124,6 +124,14 @@ func (c *XboxOneClient) Run() error {
 	// Generate a fresh lab identity for every run so a crashed test cannot
 	// poison the next invocation with a stale primary registration.
 	deviceID := uint64(0x0000fffb00000000) | uint64(time.Now().UnixNano()&0xffffffff)
+	// The retained import authority has a separate namespace from the primary
+	// GIP identity. It must also be unique while multiple Xbox personas are
+	// active on the same bus; reusing a fixed value makes the second native
+	// activation fail with 409 Conflict.
+	importDeviceID := uint64(time.Now().UnixNano())
+	if importDeviceID == 0 {
+		importDeviceID = 1
+	}
 	serial := fmt.Sprintf("%016xA1B2C3D4E5F60706", deviceID)
 	create := viipertypes.XboxOneAuthorizedCreateRequestV1{
 		Version:                      1,
@@ -145,7 +153,7 @@ func (c *XboxOneClient) Run() error {
 			TransportGeneration: 1, OwnershipEpoch: 1,
 			TimeToLiveMicroseconds: 250000,
 		},
-		ImportDeviceID: 1, LocalTimeoutMilliseconds: 100,
+		ImportDeviceID: importDeviceID, LocalTimeoutMilliseconds: 100,
 	}
 	createRaw, err := json.Marshal(create)
 	if err != nil {
@@ -256,6 +264,18 @@ func (c *XboxOneClient) removeXboxOne(client *xboxOneAPIClient, reg xboxOneRegis
 		removeDone <- removeErr
 	}()
 	if stream != nil {
+		type brokerReadResult struct {
+			frame xboxOneBrokerFrame
+			err   error
+		}
+		readResults := make(chan brokerReadResult, 1)
+		readNext := func() {
+			go func() {
+				frame, readErr := readXboxOneBroker(stream)
+				readResults <- brokerReadResult{frame: frame, err: readErr}
+			}()
+		}
+		readNext()
 		for {
 			select {
 			case removeErr := <-removeDone:
@@ -264,19 +284,19 @@ func (c *XboxOneClient) removeXboxOne(client *xboxOneAPIClient, reg xboxOneRegis
 				}
 				_ = stream.Close()
 				return
-			default:
-			}
-			frame, readErr := readXboxOneBroker(stream)
-			if readErr != nil {
-				_ = stream.Close()
-				return
-			}
-			if frame.typ == xboxOneCanonicalFeedback {
-				if err := writeXboxOneBroker(stream, xboxOneCanonicalAck,
-					frame.correlation, []byte{1}); err != nil {
+			case result := <-readResults:
+				if result.err != nil {
 					_ = stream.Close()
 					return
 				}
+				if result.frame.typ == xboxOneCanonicalFeedback {
+					if err := writeXboxOneBroker(stream, xboxOneCanonicalAck,
+						result.frame.correlation, []byte{1}); err != nil {
+						_ = stream.Close()
+						return
+					}
+				}
+				readNext()
 			}
 		}
 	}

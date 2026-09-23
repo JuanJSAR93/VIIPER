@@ -44,3 +44,6 @@ logs/
 log/
 !*/internal/log
 *.log
+
+# Python test harness cache
+__pycache__/

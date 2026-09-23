@@ -334,6 +334,27 @@ Markdown report contains the identity/status snapshot for every controller and
 the PASS/FAIL result for every button press, release, trigger, stick, touch or
 motion state.
 
+For a same-type fan-out test, use the dedicated harness. By default it runs
+four and then eight simultaneous instances of Xbox 360, DualShock 4, DualSense,
+Switch 2 Pro and Xbox One/Series. Every instance uses its own input stream and
+is checked through the real USB/IP import state:
+
+```powershell
+python scripts/test_same_type_fanout.py `
+  --viiper .\viiper.exe `
+  --usbip "C:\Program Files\USBip\usbip.exe" `
+  --counts 4 8 `
+  --report .\viiper_fanout_report.md
+```
+
+Use `--only-type dualsense` (or another supported type) to isolate one family,
+and `--xbox-profile xboxseries` to use the Xbox Series identity. The Xbox
+client assigns a distinct primary GIP identity and a distinct retained import
+ID to every concurrent persona; this is required for multiple Xbox instances
+to remain active on the same VIIPER bus. The harness closes each input stream,
+removes the bus through the API, detaches USB/IP ports and calls
+`server/shutdown` after every group.
+
 ## Uso detallado del sistema
 
 Esta sección describe el flujo completo para ejecutar VIIPER directamente en
