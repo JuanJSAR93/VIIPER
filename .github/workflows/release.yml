@@ -97,6 +97,11 @@ jobs:
                       done
                     fi
                   done
+                  # Publish the CI executable as the immutable repair payload,
+                  # including for release candidates that skip client registries.
+                  flat_name="VIIPER-${GITHUB_REF_NAME#v}-x64.exe"
+                  unzip -p release_files/viiper-windows-amd64.zip viiper.exe > "release_files/$flat_name"
+                  test -s "release_files/$flat_name"
                   ls -la release_files/
 
             - name: Extract build info
@@ -194,12 +199,6 @@ jobs:
                       done
                     fi
                   done
-                  # DS4Windows repairs download one immutable, release-pinned
-                  # binary. Publish the exact executable from the CI archive,
-                  # never a separately rebuilt or mutable "latest" payload.
-                  flat_name="VIIPER-${GITHUB_REF_NAME#v}-x64.exe"
-                  unzip -p release_files/viiper-windows-amd64.zip viiper.exe > "release_files/$flat_name"
-                  test -s "release_files/$flat_name"
                   ls -la release_files/
 
             - name: Set up Node.js (for npm publish)
