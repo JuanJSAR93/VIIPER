@@ -72,6 +72,26 @@ func (s *Server) USB() *usb.Server { return s.usbs }
 // Config returns the server configuration.
 func (s *Server) Config() *ServerConfig { return s.config }
 
+// IsDeviceStreamActive reports whether the exact registered device incarnation
+// currently has an API input/feedback stream. A registration token is part of
+// the key so a removed device cannot make a replacement look connected.
+func (s *Server) IsDeviceStreamActive(registration virtualbus.DeviceMeta) bool {
+	if s == nil || registration.Bus == nil || registration.Context == nil ||
+		registration.RegistrationToken == 0 {
+		return false
+	}
+	key := deviceStreamKey{
+		busID:             registration.Meta.BusID,
+		devID:             fmt.Sprintf("%d", registration.Meta.DevID),
+		bus:               registration.Bus,
+		registrationToken: registration.RegistrationToken,
+	}
+	s.deviceStreams.mu.Lock()
+	defer s.deviceStreams.mu.Unlock()
+	state := s.deviceStreams.streams[key]
+	return state != nil && state.active
+}
+
 // ScheduleDeviceCleanup arms the initial no-stream cleanup through the same
 // generation owner used for reconnects. A stream that claims the device before
 // the timeout atomically cancels this cleanup.
@@ -284,6 +304,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		connLogger.Debug("api handler success", "path", path)
 		s.writeOK(w, res.JSON)
+		if res.AfterWrite != nil {
+			res.AfterWrite()
+		}
 		return
 	} else if sh, params := s.router.MatchStream(path); sh != nil {
 		connLogger.Info("api stream begin", "path", path)

@@ -8,15 +8,14 @@
 
 **Virtual Input over IP EmulatoR**
 
-VIIPER is a userspace virtual USB device framework built on USBIP. This
-hbashton fork is the backend used by the hbashton DS4Windows project for native
-virtual controller output, including the ongoing DualSense audio, haptics, and
-microphone work.
+VIIPER is a userspace virtual USB device framework built on USBIP. This fork
+provides the backend used by the hbashton DS4Windows project for native virtual
+controller output, including DualSense audio, haptics, and microphone work.
 
-This repository is forked from [Alia5/VIIPER](https://github.com/Alia5/VIIPER).
-The hbashton release channel contains the protocol and USB-audio changes needed
-by [hbashton/DS4Windows](https://github.com/hbashton/DS4Windows). Install links
-in this README download hbashton builds.
+This repository is forked from [Alia5/VIIPER](https://github.com/Alia5/VIIPER)
+and incorporates the protocol, USB-audio, device-identity, and lifecycle work
+used by [hbashton/DS4Windows](https://github.com/hbashton/DS4Windows). This fork
+is maintained at [JuanJSAR93/VIIPER](https://github.com/JuanJSAR93/VIIPER).
 
 > **Windows releases from this fork are x64 only.** x86 Windows and x86
 > DS4Windows builds are not compatible with VIIPER. Use 64-bit Windows and the
@@ -56,7 +55,7 @@ You can also download `viiper.exe` manually from the
 VIIPER itself is portable, but virtual devices on Windows still require the
 [`usbip-win2`](https://github.com/vadimgrn/usbip-win2) kernel driver.
 
-## What the hbashton fork adds
+## What this fork adds
 
 ### DS4Windows controller backends
 
@@ -70,6 +69,41 @@ VIIPER can expose the following virtual USB devices for DS4Windows:
 
 The generic VIIPER keyboard and mouse devices remain available to other feeder
 applications.
+
+### Explicit VIIPER device identity
+
+VIIPER devices publish their own product strings. Applications running on
+Windows can use `DEVPKEY_Device_BusReportedDeviceDesc` to distinguish a VIIPER
+device from a physical controller that uses the same protocol or VID/PID.
+
+| Device | Product string | Development identity or evidence |
+| --- | --- | --- |
+| Xbox 360 | `VIIPER Xbox 360 Controller` | Xbox/XInput-compatible virtual USB device |
+| DualShock 4 | `VIIPER DualShock 4 Controller` | DS4-compatible virtual USB device |
+| DualSense | `VIIPER DualSense Wireless Controller` | DS5-compatible virtual USB device |
+| Switch 2 Pro | `VIIPER Switch 2 Pro Controller` | Switch 2 Pro-compatible virtual USB device |
+| Xbox One/Series | `VIIPER Xbox One Controller` or an authorized profile string | Explicit retained USB/IP development path |
+
+The product string is the primary signal. The PnP parent and service can be
+used as corroborating evidence, but they may vary with Windows, the installed
+driver, and the USB topology. Do not identify virtual devices using VID/PID
+alone. See [Windows device identification](docs/VIIPER_DEVICE_IDENTIFICATION.md)
+for a PowerShell example.
+
+### Xbox One and Xbox Series retained path
+
+The repository contains an explicit, authenticated retained USB/IP composition
+for Xbox One/Series development. It is intentionally separate from the
+generic device factory: the caller supplies the authorized identity, USB
+profile, product strings, GIP device identity, and removal capability. The
+development client is available at
+[`cmd/viiper-xboxone-client`](cmd/viiper-xboxone-client/main.go).
+
+This path supports the VIIPER broker protocol for semantic input, canonical
+feedback acknowledgements, USB/IP import, and exact registration removal. It is
+not a claim that every Xbox One or Series firmware, Windows binding, or physical
+controller has been validated. See the [Xbox One API notes](docs/api/xboxone-exact-removal.md)
+and the [Xbox One provenance record](device/xboxone/PROVENANCE.md).
 
 ### Native DualSense input
 
@@ -156,16 +190,27 @@ appear wirelessly paired. The game sees a native-style USB controller. DS4Window
 is responsible for translating and forwarding supported feedback between that
 virtual USB device and the physical USB or Bluetooth controller.
 
+## Privacy and update behavior
+
+VIIPER has no built-in update checker, update dialog, self-update installer, or
+outbound telemetry client. The server does not contact GitHub or another vendor
+service to check for updates. Updates are performed by replacing the binary or
+by the application that embeds VIIPER, such as DS4Windows.
+
+This is independent of any update behavior implemented by a feeder application.
+See [server configuration](docs/cli/configuration.md) for the privacy and
+configuration details.
+
 ## Requirements
 
 ### Windows
 
 - Windows 10 or Windows 11 x64
 - [`usbip-win2`](https://github.com/vadimgrn/usbip-win2)
-- The hbashton VIIPER executable for the protocol used by your DS4Windows build
+- A VIIPER executable matching the protocol used by your feeder application
 - Administrator approval for driver installation and startup registration
 
-The current hbashton release channel prioritizes Windows x64 and DS4Windows.
+The upstream hbashton release channel prioritizes Windows x64 and DS4Windows.
 The underlying VIIPER project remains cross-platform, but binaries and features
 available from this fork may differ from upstream.
 
@@ -195,6 +240,42 @@ See:
 - [Switch 2 Pro protocol](docs/devices/ns2pro.md)
 - [libVIIPER overview](docs/libviiper/overview.md)
 
+### Server lifecycle controls
+
+The production server exposes internal lifecycle commands through the same API:
+
+| Command | Response | Behavior |
+| --- | --- | --- |
+| `server/status` | `{"server":"VIIPER", "state":"running", ...}` | Reports listeners, buses, devices, active USB/IP imports, and active input streams. |
+| `server/restart` | `{"accepted":true,"action":"restart"}` | Gracefully closes the current listeners and starts a fresh server inside the same process. |
+| `server/shutdown` | `{"accepted":true,"action":"shutdown"}` | Gracefully closes the API and USB/IP servers and exits the server command. |
+
+Management requests are null-terminated. For example, a client sends the path
+`server/status` followed by a NUL byte. Localhost authentication is optional by
+default; remote API connections require authentication. Set
+`--api.require-local-host-auth=true` when localhost control must also be
+authenticated.
+
+`server/restart` is an in-process lifecycle operation; it does not require
+`taskkill`. Existing USB/IP connections and the current virtual topology are
+closed during the restart and are not persisted automatically. Recreate or
+reattach devices after a restart when the feeder does not do so for you.
+
+The `usbipImported` field in `server/status` is server-side evidence that a
+USB/IP client has an active import connection. It confirms the server's mount
+state, but does not by itself prove that the remote Windows Plug and Play
+stack has completed enumeration.
+
+The implementation has been validated with the Windows `usbip.exe` client:
+`server/restart` returned to a running listener in the same process,
+`server/shutdown` closed the listeners internally, and an authorized VIIPER
+Xbox One test device changed from `usbipImported: false` to
+`usbipImported: true` after a real `usbip.exe attach`. A separate Xbox 360
+test also reported its active USB/IP import and input stream.
+
+See the complete [API overview](docs/api/overview.md) and the [server command
+reference](docs/cli/server.md).
+
 ## Build from source
 
 ### Prerequisites
@@ -207,7 +288,7 @@ See:
 ### Build
 
 ```powershell
-git clone https://github.com/hbashton/VIIPER.git
+git clone https://github.com/JuanJSAR93/VIIPER.git
 cd VIIPER
 just build Release
 ```
@@ -221,6 +302,17 @@ go test ./...
 go run ./cmd/viiper codegen
 ```
 
+The Windows release build generates the version resource from
+[`versioninfo.json`](versioninfo.json), including [`viiper.ico`](viiper.ico).
+For a direct development binary:
+
+```powershell
+go build -o viiper.exe ./cmd/viiper
+```
+
+Run `just build Release` when the version metadata and Windows icon must be
+regenerated as part of the build.
+
 Client bindings are generated for TypeScript, C#, C++, and Rust. Run code
 generation whenever a public device-state or feedback contract changes, then
 build the client examples before publishing the change.
@@ -231,6 +323,15 @@ build the client examples before publishing the change.
   restart Windows if `usbip-win2` was just installed.
 - **No virtual controller appears:** confirm `viiper.exe server` is running and
   that the USBIP driver is installed.
+- **Need to verify whether a device is mounted:** query `server/status` and
+  inspect the device's `usbipImported` field. Confirm the client-side port with
+  `usbip.exe port` when using usbip-win2.
+- **The server is stuck:** use `server/restart` for an in-process restart or
+  `server/shutdown` for a graceful close. These commands close owned listeners
+  and imports without relying on `taskkill`.
+- **A virtual device must be distinguished from a physical one:** read
+  `DEVPKEY_Device_BusReportedDeviceDesc` and match the `VIIPER ... Controller`
+  product string. See [Windows device identification](docs/VIIPER_DEVICE_IDENTIFICATION.md).
 - **Several stale controllers appear:** stop DS4Windows and VIIPER, start VIIPER
   once, then start DS4Windows. Report repeatable lifecycle bugs with both logs.
 - **DualSense audio or microphone endpoints are missing:** use matching

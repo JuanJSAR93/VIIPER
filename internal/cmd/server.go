@@ -28,12 +28,50 @@ type Server struct {
 
 // Run is called by Kong when the server command is executed.
 func (s *Server) Run(logger *slog.Logger, rawLogger log.RawLogger) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	parentCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return s.StartServer(ctx, logger, rawLogger)
+
+	for {
+		restartRequested := make(chan struct{}, 1)
+		attemptCtx, cancel := context.WithCancel(parentCtx)
+		requestShutdown := cancel
+		requestRestart := func() {
+			select {
+			case restartRequested <- struct{}{}:
+			default:
+			}
+			cancel()
+		}
+
+		err := s.startServer(attemptCtx, logger, rawLogger,
+			requestShutdown, requestRestart)
+		cancel()
+		if err != nil {
+			return err
+		}
+		select {
+		case <-parentCtx.Done():
+			return nil
+		case <-restartRequested:
+			logger.Info("Restarting VIIPER server by internal request")
+			continue
+		default:
+			return nil
+		}
+	}
 }
 
 func (s *Server) StartServer(ctx context.Context, logger *slog.Logger, rawLogger log.RawLogger) error {
+	return s.startServer(ctx, logger, rawLogger, nil, nil)
+}
+
+func (s *Server) startServer(
+	ctx context.Context,
+	logger *slog.Logger,
+	rawLogger log.RawLogger,
+	requestShutdown func(),
+	requestRestart func(),
+) error {
 	keyFilePath, err := resolveServerKeyFilePath(s.KeyFile)
 	if err != nil {
 		return err
@@ -87,6 +125,13 @@ func (s *Server) StartServer(ctx context.Context, logger *slog.Logger, rawLogger
 			api.RegisterStreamHandler("xboxone", xboxone.ProductionStreamHandler)
 			r := apiSrv.Router()
 			r.Register("ping", handler.Ping())
+			r.Register("server/status", handler.ServerStatus(usbSrv, apiSrv))
+			if requestShutdown != nil {
+				r.Register("server/shutdown", handler.ServerShutdown(requestShutdown))
+			}
+			if requestRestart != nil {
+				r.Register("server/restart", handler.ServerRestart(requestRestart))
+			}
 			r.Register("bus/list", handler.BusList(usbSrv))
 			r.Register("bus/create", handler.BusCreate(usbSrv))
 			r.Register("bus/remove", handler.BusRemove(usbSrv))

@@ -636,7 +636,9 @@ func (lifecycle *ControllerLifecycle) ClaimHostCommand(
 	}
 	transition, present, err := lifecycle.selectHostCommand(command)
 	if err != nil {
-		return ControllerLifecycleClaim{}, false, err
+		return ControllerLifecycleClaim{}, false, fmt.Errorf(
+			"%w: lifecycle_state=%d command_kind=%d command_state=0x%02x",
+			err, lifecycle.core.state, command.Kind, command.State)
 	}
 	if !present {
 		lifecycle.lastNowMS = nowMS
@@ -662,12 +664,16 @@ func (lifecycle *ControllerLifecycle) selectHostCommand(
 		}
 	}
 	if command.Kind == ControllerHostCommandSecurityDataComplete {
-		if lifecycle.core.state == ControllerLifecycleActive {
-			// Windows has completed the opted-out exchange. Preserve every
-			// lifecycle field; there is no device response or state transition.
+		switch lifecycle.core.state {
+		case ControllerLifecycleActive, ControllerLifecycleIdle:
+			// Windows and usbip-win2 may complete the security exchange either
+			// before START has promoted the controller to Active or after it has
+			// returned to Idle. This is a marker only: preserve every lifecycle
+			// field and do not emit a device response or state transition.
 			return transition, false, nil
+		default:
+			return controllerLifecycleTransition{}, false, ErrUnexpectedLifecycleCommand
 		}
-		return controllerLifecycleTransition{}, false, ErrUnexpectedLifecycleCommand
 	}
 	if lifecycle.core.state == ControllerLifecycleTerminatingOff ||
 		lifecycle.core.state == ControllerLifecycleTerminatingReset {

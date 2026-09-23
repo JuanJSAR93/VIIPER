@@ -917,6 +917,39 @@ func (s *Server) GetBus(busID uint32) *virtualbus.VirtualBus {
 	return s.busses[busID]
 }
 
+// IsDeviceImported reports whether the USB/IP server currently owns an import
+// lease for the exact device instance. This is the server-side evidence that
+// a USB/IP client has mounted the virtual device; it does not claim that the
+// client OS has completed PnP enumeration.
+func (s *Server) IsDeviceImported(dev usb.Device) bool {
+	if s == nil || dev == nil {
+		return false
+	}
+	s.importsMu.Lock()
+	_, imported := s.activeImports[dev]
+	s.importsMu.Unlock()
+	if imported {
+		return true
+	}
+
+	// Retained imports use a separate ownership authority from the legacy
+	// activeImports map. Their registration closure is the exact server-side
+	// proof that an import stream was admitted for this device instance.
+	deviceReference, valid := exactRetainedImportOwnerReference(dev)
+	if !valid {
+		return false
+	}
+	s.serverLifecycleMu.Lock()
+	defer s.serverLifecycleMu.Unlock()
+	for key, registration := range s.retainedRegistrationClosures {
+		if registration != nil && key.device == deviceReference &&
+			!registration.closing && registration.terminalErr == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) NextFreeBusID() uint32 {
 	s.busesMu.Lock()
 	defer s.busesMu.Unlock()
@@ -1553,6 +1586,40 @@ func (s *Server) SnapshotDeviceDescriptor(
 		return nil, fmt.Errorf("device has no descriptor")
 	}
 	return descriptor, nil
+}
+
+// SnapshotDeviceDescriptorForStatus returns a descriptor suitable for a
+// status snapshot. Retained devices keep their sealed descriptor in the
+// admission record while an import is active because their live owner is
+// intentionally unavailable to a second descriptor callback during import.
+func (s *Server) SnapshotDeviceDescriptorForStatus(
+	registration virtualbus.DeviceMeta,
+) (*usb.Descriptor, error) {
+	if s != nil && registration.Dev != nil {
+		if _, retained := registration.Dev.(retainedusb.ImportDevice); retained {
+			key, valid := retainedRegistrationCloseKey(registration)
+			if valid {
+				s.retainedFailureMu.Lock()
+				admission := s.retainedDeviceAdmissions[key]
+				if admission != nil {
+					admission.mu.Lock()
+					descriptor := admission.descriptor
+					failure := admission.failure
+					admission.mu.Unlock()
+					s.retainedFailureMu.Unlock()
+					if failure != nil {
+						return nil, failure
+					}
+					if descriptor != nil {
+						return descriptor, nil
+					}
+				} else {
+					s.retainedFailureMu.Unlock()
+				}
+			}
+		}
+	}
+	return s.SnapshotDeviceDescriptor(registration)
 }
 
 func (s *Server) snapshotRetainedDescriptor(

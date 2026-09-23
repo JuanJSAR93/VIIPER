@@ -20,12 +20,14 @@ import (
 )
 
 const (
-	brokerMagic   = "X1BR"
-	brokerVersion = 1
-	consumerReady = 0x01
-	semanticInput = 0x02
-	consumerAck   = 0x81
-	semanticAck   = 0x82
+	brokerMagic       = "X1BR"
+	brokerVersion     = 1
+	consumerReady     = 0x01
+	semanticInput     = 0x02
+	canonicalAck      = 0x03
+	consumerAck       = 0x81
+	semanticAck       = 0x82
+	canonicalFeedback = 0x83
 )
 
 type registration struct {
@@ -56,6 +58,7 @@ func main() {
 	passwordFile := flag.String("key-file", "", "VIIPER API password file")
 	pauseBeforeActivate := flag.Bool("pause-before-activate", false, "leave the authorized persona ready for an external usbip attach test")
 	holdSeconds := flag.Int("hold-seconds", 3, "keep the attached persona alive after the input acknowledgement")
+	inputTest := flag.Bool("input-test", false, "send a live input matrix and verify each semantic ACK")
 	flag.Parse()
 	if *passwordFile == "" {
 		fatal(errors.New("--key-file is required"))
@@ -124,16 +127,48 @@ func main() {
 	}
 	reg := registration{BusID: bus.BusID, DevID: created.DevID, Removal: created.Removal, USBIPBusID: created.USBIPBusID, RemoveMs: created.RemoveMs}
 	fmt.Printf("persona creada: bus=%d dev=%s vid=F00D pid=BEED producto=%q usbip=%s\n", reg.BusID, reg.DevID, create.Strings.Product, reg.USBIPBusID)
+	var stream net.Conn
 	defer func() {
 		payload, _ := json.Marshal(map[string]any{"version": 1, "removalToken": reg.Removal})
-		_, _ = client.request(context.Background(), fmt.Sprintf("bus/%d/%s/remove-authorized-xboxone", reg.BusID, reg.DevID), string(payload))
+		removeDone := make(chan error, 1)
+		go func() {
+			_, removeErr := client.request(context.Background(), fmt.Sprintf("bus/%d/%s/remove-authorized-xboxone", reg.BusID, reg.DevID), string(payload))
+			removeDone <- removeErr
+		}()
+		if stream != nil {
+			for {
+				select {
+				case removeErr := <-removeDone:
+					if removeErr != nil {
+						fmt.Printf("retiro Xbox One: %v\n", removeErr)
+					}
+					_ = stream.Close()
+					return
+				default:
+				}
+				frame, readErr := readBroker(stream)
+				if readErr != nil {
+					_ = stream.Close()
+					return
+				}
+				if frame.typ == canonicalFeedback {
+					if err := writeBroker(stream, canonicalAck, frame.correlation, []byte{1}); err != nil {
+						_ = stream.Close()
+						return
+					}
+				}
+			}
+		}
+		<-removeDone
+		if stream != nil {
+			_ = stream.Close()
+		}
 	}()
 
-	stream, err := client.openStream(ctx, reg)
+	stream, err = client.openStream(ctx, reg)
 	if err != nil {
 		fatal(fmt.Errorf("abrir broker Xbox One: %w", err))
 	}
-	defer stream.Close()
 	if err := writeBroker(stream, consumerReady, 0, nil); err != nil {
 		fatal(fmt.Errorf("ConsumerReady: %w", err))
 	}
@@ -173,6 +208,30 @@ func main() {
 		fatal(fmt.Errorf("SemanticInputAck inválido: frame=%+v err=%v", ack, err))
 	}
 	fmt.Println("broker: estado neutral aceptado")
+	if *inputTest {
+		testStates := []xboxone.InputStateV1{
+			{A: true},
+			{B: true, LeftTrigger: 512, RightTrigger: 1023},
+			{X: true, Y: true, DPadUp: true, DPadRight: true},
+			{LeftBumper: true, RightBumper: true, LeftStickButton: true, RightStickButton: true},
+			{LeftStickX: -32768, LeftStickY: 32767, RightStickX: 16384, RightStickY: -16384},
+			{Menu: true, View: true, Guide: true, Share: true},
+		}
+		for i, state := range testStates {
+			revision := uint64(3 + i)
+			if err := xboxone.EncodeSemanticInputWireV1Into(wire[:], state); err != nil {
+				fatal(fmt.Errorf("codificar prueba de entrada %d: %w", i+1, err))
+			}
+			if err := writeBroker(stream, semanticInput, revision, wire[:]); err != nil {
+				fatal(fmt.Errorf("enviar prueba de entrada %d: %w", i+1, err))
+			}
+			ack, err := readBroker(stream)
+			if err != nil || ack.typ != semanticAck || ack.correlation != revision || len(ack.payload) != 1 || ack.payload[0] != 1 {
+				fatal(fmt.Errorf("SemanticInputAck de prueba %d inválido: frame=%+v err=%v", i+1, ack, err))
+			}
+			fmt.Printf("broker: entrada %d aceptada (revision=%d)\n", i+1, revision)
+		}
+	}
 	fmt.Printf("PRUEBA VIIPER Xbox One completada; manteniendo el dispositivo %d segundos para inspección\n", *holdSeconds)
 	if *holdSeconds > 0 {
 		time.Sleep(time.Duration(*holdSeconds) * time.Second)

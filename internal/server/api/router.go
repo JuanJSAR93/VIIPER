@@ -20,6 +20,10 @@ type Request struct {
 // Response holds the JSON string to return to the client.
 type Response struct {
 	JSON string
+	// AfterWrite runs after the management response has been written. It is
+	// used by lifecycle commands so the caller receives its acknowledgement
+	// before the server begins closing listeners and connections.
+	AfterWrite func()
 }
 
 // HandlerFunc processes a request and populates the response.

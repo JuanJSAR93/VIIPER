@@ -229,7 +229,7 @@ func TestControllerLifecycleExtendedInitializationDoesNotReplaceStart(t *testing
 	requireLifecycleAction(t, start, 0, 3, ControllerLifecycleSendCurrentStatus)
 }
 
-func TestControllerLifecycleSecurityDataCompleteIsActiveNoOp(t *testing.T) {
+func TestControllerLifecycleSecurityDataCompleteIsActiveOrIdleNoOp(t *testing.T) {
 	lifecycle, nowMS := makeActiveLifecycle(t, 0)
 	before := lifecycle.Snapshot()
 	command := ControllerHostCommand{
@@ -245,10 +245,21 @@ func TestControllerLifecycleSecurityDataCompleteIsActiveNoOp(t *testing.T) {
 			before, after)
 	}
 
-	idle := NewControllerLifecycle(0)
-	if _, _, err := idle.ClaimHostCommand(1, command); !errors.Is(
-		err, ErrUnexpectedLifecycleCommand) {
-		t.Fatalf("idle security complete error = %v", err)
+	idle, idleNowMS := makeActiveLifecycle(t, 100)
+	stop := claimLifecycleCommand(t, &idle, idleNowMS+1,
+		setStateCommand(3, SetDeviceStateStop))
+	deliverLifecycleAction(t, &idle, stop, idleNowMS+2)
+	clearOutputs := nextLifecycleAction(t, &idle, idleNowMS+3)
+	deliverLifecycleAction(t, &idle, clearOutputs, idleNowMS+4)
+	idleBefore := idle.Snapshot()
+	claim, present, err = idle.ClaimHostCommand(idleNowMS+5, command)
+	if err != nil || present || claim.Valid() {
+		t.Fatalf("idle security complete = (claim %+v, present %t, err %v)",
+			claim, present, err)
+	}
+	if idleAfter := idle.Snapshot(); idleAfter != idleBefore {
+		t.Fatalf("idle security complete changed lifecycle: before=%+v after=%+v",
+			idleBefore, idleAfter)
 	}
 }
 

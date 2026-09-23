@@ -161,6 +161,60 @@ The exception to this are the device-control and feedback streams, which are raw
 
     **Response:** `{ "server": "VIIPER", "version": "1.2.3[-dev-abcd]" }`
 
+#### `server/status` {.toc-anchor}
+
+??? info "server/status - Live server and device ownership state"
+    **Request:** `server/status`
+
+    **Response:**
+    ```json
+    {
+      "server": "VIIPER",
+      "state": "running",
+      "usbipAddr": "127.0.0.1:3241",
+      "apiAddr": "127.0.0.1:3242",
+      "activeImports": 1,
+      "activeStreams": 1,
+      "buses": [
+        {
+          "busId": 1,
+          "devices": [
+            {
+              "busId": 1,
+              "devId": "1",
+              "vid": "0x045e",
+              "pid": "0x028e",
+              "type": "xbox360",
+              "usbipImported": true,
+              "inputStreamActive": true
+            }
+          ]
+        }
+      ]
+    }
+    ```
+
+    `usbipImported` is true when the VIIPER USB/IP server owns an active
+    import connection. `inputStreamActive` is true when the feeder/API stream
+    for that exact device registration is connected. These fields do not by
+    themselves prove that a remote Windows client has completed PnP setup.
+
+#### `server/shutdown` and `server/restart` {.toc-anchor}
+
+??? info "server/shutdown - Gracefully close the VIIPER server"
+    **Request:** `server/shutdown`
+
+    **Response:** `{ "accepted": true, "action": "shutdown" }`
+
+??? info "server/restart - Restart the VIIPER server in-process"
+    **Request:** `server/restart`
+
+    **Response:** `{ "accepted": true, "action": "restart" }`
+
+    The response is written before VIIPER drains its current listeners and
+    starts a fresh server instance in the same process. Remote connections
+    still require the normal API authentication policy.
+
 #### `bus/list` {.toc-anchor}
 
 ??? info "bus/list - List all virtual bus IDs"

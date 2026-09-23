@@ -64,6 +64,34 @@ type DevicesListResponse struct {
 	Devices []Device `json:"devices"`
 }
 
+// ServerStatusResponse describes the live VIIPER server and the state known
+// at its two ownership boundaries: USB/IP import and API input stream.
+type ServerStatusResponse struct {
+	Server        string            `json:"server"`
+	State         string            `json:"state"`
+	USBIPAddr     string            `json:"usbipAddr"`
+	APIAddr       string            `json:"apiAddr"`
+	ActiveImports int               `json:"activeImports"`
+	ActiveStreams int               `json:"activeStreams"`
+	Buses         []ServerStatusBus `json:"buses"`
+}
+
+type ServerStatusBus struct {
+	BusID   uint32               `json:"busId"`
+	Devices []ServerStatusDevice `json:"devices"`
+}
+
+type ServerStatusDevice struct {
+	BusID             uint32         `json:"busId"`
+	DevID             string         `json:"devId"`
+	Vid               string         `json:"vid"`
+	Pid               string         `json:"pid"`
+	Type              string         `json:"type"`
+	DeviceSpecific    map[string]any `json:"deviceSpecific"`
+	USBIPImported     bool           `json:"usbipImported"`
+	InputStreamActive bool           `json:"inputStreamActive"`
+}
+
 type DeviceRemoveResponse struct {
 	BusID uint32 `json:"busId"`
 	DevID string `json:"devId"`
