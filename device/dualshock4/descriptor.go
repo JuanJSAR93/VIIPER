@@ -444,7 +444,7 @@ var defaultDescriptor = usb.Descriptor{
 	Strings: map[uint8]string{
 		0: "\u0409", // LangID: en-US (0x0409)
 		1: "Sony Interactive Entertainment",
-		2: "Wireless Controller",
+		2: "VIIPER DualShock 4 Controller",
 	},
 }
 

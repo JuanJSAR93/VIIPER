@@ -83,7 +83,7 @@ func MakeDescriptor() usb.Descriptor {
 		Strings: map[uint8]string{
 			0: "\u0409",
 			1: "Nintendo",
-			2: "Switch 2 Pro Controller",
+			2: "VIIPER Switch 2 Pro Controller",
 			3: DefaultSerialEnding,
 			4: "Nintendo Switch 2 Pro Controller",
 			5: "Nintendo Switch 2 Pro Controller",

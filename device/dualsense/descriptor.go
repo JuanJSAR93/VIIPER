@@ -311,7 +311,7 @@ var defaultDescriptor = usb.Descriptor{
 		// Windows propagates this into the usbaudio device and its speaker
 		// endpoint, and some PlayStation titles use that identity when they
 		// choose a controller-specific audio route.
-		2: "DualSense Wireless Controller",
+		2: "VIIPER DualSense Wireless Controller",
 	},
 }
 

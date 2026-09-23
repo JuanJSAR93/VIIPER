@@ -98,7 +98,7 @@ func TestDescriptor(t *testing.T) {
 	assert.Equal(t, uint16(DefaultVID), desc.Device.IDVendor)
 	assert.Equal(t, uint16(DefaultPID), desc.Device.IDProduct)
 	assert.Equal(t, uint16(0x0200), desc.Device.BcdDevice)
-	assert.Equal(t, "Switch 2 Pro Controller", desc.Strings[2])
+	assert.Equal(t, "VIIPER Switch 2 Pro Controller", desc.Strings[2])
 	assert.Equal(t, DefaultSerialEnding, desc.Strings[3])
 	assert.Equal(t, "Nintendo Switch 2 Pro Controller", desc.Strings[4])
 	assert.Equal(t, "Nintendo Switch 2 Pro Controller", desc.Strings[5])
@@ -415,7 +415,7 @@ func TestStreamInputAndRumble(t *testing.T) {
 
 	productString, err := controlIn(imp.Conn, controlSetup(0x0302, 0, 64))
 	require.NoError(t, err)
-	assert.Equal(t, usb.EncodeStringDescriptor("Switch 2 Pro Controller"), productString)
+	assert.Equal(t, usb.EncodeStringDescriptor("VIIPER Switch 2 Pro Controller"), productString)
 
 	serialString, err := controlIn(imp.Conn, controlSetup(0x0303, 0, 64))
 	require.NoError(t, err)
