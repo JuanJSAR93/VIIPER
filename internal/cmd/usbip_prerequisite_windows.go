@@ -13,7 +13,10 @@ import (
 )
 
 const (
-	requiredUSBIPVersion = "0.9.7.7"
+	// Local compatibility experiment: the machine under test has the newer
+	// usbip-win2 0.9.8.0 already installed. Keep the original release source
+	// untouched; this worktree-only build is used to validate ABI compatibility.
+	requiredUSBIPVersion = "0.9.8.0"
 	usbipProbeTimeout    = 10 * time.Second
 )
 

@@ -57,7 +57,7 @@ func TestContextNativeAttachPreservesABIAndOperationChoice(t *testing.T) {
 				require.Equal(t, expected, *req)
 				require.Equal(t, (*byte)(unsafe.Pointer(req)), in)
 				require.Equal(t, in, out)
-				require.Equal(t, uint32(1100), inSize)
+				require.Equal(t, uint32(1120), inSize)
 				require.Equal(t, uint32(8), outSize)
 				require.NotNil(t, ov)
 				require.Equal(t, windows.Handle(101), ov.HEvent)
@@ -221,7 +221,7 @@ func TestContextNativeAttachIncompleteObservationCannotRetireStorage(t *testing.
 }
 
 func TestContextNativeAttachRejectsMalformedCompletionAndEventFailure(t *testing.T) {
-	for _, returnedSize := range []uint32{0, 4, 7, 9, 1100} {
+	for _, returnedSize := range []uint32{0, 4, 7, 9, 1120} {
 		req, calls, closed := nativeOperationFixture(t)
 		calls.control = func(windows.Handle, uint32, *byte, uint32, *byte, uint32, *uint32, *windows.Overlapped) error {
 			return windows.ERROR_IO_PENDING

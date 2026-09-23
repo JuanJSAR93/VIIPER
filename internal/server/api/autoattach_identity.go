@@ -25,5 +25,5 @@ func localhostAttachArguments(meta *usbip.ExportMeta, port uint16) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	return []string{"--tcp-port", strconv.FormatUint(uint64(port), 10), "attach", "-r", "localhost", "-b", busID}, nil
+	return []string{"--tcp-port", strconv.FormatUint(uint64(port), 10), "attach", "-r", autoAttachHost(), "-b", busID}, nil
 }

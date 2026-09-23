@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// usbip-win2 0.9.7.7 vhci::ioctl::stop_attach_attempts, not PLUGOUT.
+// usbip-win2 0.9.8.0 vhci::ioctl::stop_attach_attempts, not PLUGOUT.
 // All three location strings must be present: zero strings mean stop ALL.
 type stopAttachIOCTL struct {
 	attachIOCTL

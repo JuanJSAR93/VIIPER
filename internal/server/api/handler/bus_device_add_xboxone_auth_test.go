@@ -47,7 +47,7 @@ func TestXboxOneActivationRejectsUnauthenticatedRequestBeforeLookup(t *testing.T
 	}
 }
 
-func TestXboxOneActivationAcceptsPinned0977NativePortWithoutOwnerSerial(
+func TestXboxOneActivationAcceptsPinned0980NativePortWithoutOwnerSerial(
 	t *testing.T,
 ) {
 	for _, test := range []struct {
@@ -55,7 +55,7 @@ func TestXboxOneActivationAcceptsPinned0977NativePortWithoutOwnerSerial(
 		result api.AutoAttachResult
 		want   bool
 	}{
-		{name: "native 0.9.7.7", result: api.AutoAttachResult{USBIPPort: 7}, want: true},
+		{name: "native 0.9.8.0", result: api.AutoAttachResult{USBIPPort: 7}, want: true},
 		{name: "future owner token", result: api.AutoAttachResult{
 			USBIPPort: 8, USBIPOwnerSerial: "DS4W123456789AB"}, want: true},
 		{name: "missing port", result: api.AutoAttachResult{}, want: false},
@@ -70,7 +70,7 @@ func TestXboxOneActivationAcceptsPinned0977NativePortWithoutOwnerSerial(
 	}
 }
 
-func TestXboxOneReadyConsumerActivatesPinned0977PortEndToEnd(t *testing.T) {
+func TestXboxOneReadyConsumerActivatesPinned0980PortEndToEnd(t *testing.T) {
 	const (
 		busID       = uint32(63001)
 		authorityID = uint64(0x4453345758423031)

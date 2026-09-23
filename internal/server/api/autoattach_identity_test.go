@@ -15,7 +15,7 @@ func TestAutoAttachArgumentsPreserveExactAliasAndNumericLegacyIdentity(t *testin
 		copy(meta.USBBusID[:], busID)
 		arguments, err := localhostAttachArguments(&meta, 3241)
 		require.NoError(t, err)
-		require.Equal(t, []string{"--tcp-port", "3241", "attach", "-r", "localhost", "-b", busID}, arguments)
+		require.Equal(t, []string{"--tcp-port", "3241", "attach", "-r", autoAttachHost(), "-b", busID}, arguments)
 	}
 	_, err = localhostAttachArguments(&usbip.ExportMeta{BusID: 17, DevID: 4}, 3241)
 	require.Error(t, err)
