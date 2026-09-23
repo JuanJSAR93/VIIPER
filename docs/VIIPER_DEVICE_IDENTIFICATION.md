@@ -8,7 +8,8 @@ Los mandos VIIPER usan nombres de producto propios para que una aplicación pued
 | VIIPER DS4 | `VIIPER DualShock 4 Controller` | Padre `USB\\ROOT_HUB30...` |
 | VIIPER DS5 | `VIIPER DualSense Wireless Controller` | Padre `USB\\ROOT_HUB30...` |
 | VIIPER Switch 2 Pro | `VIIPER Switch 2 Pro Controller` | Padre `USB\\ROOT_HUB30...` |
-| VIIPER Xbox One | `VIIPER Xbox One Controller` | Clase `XboxComposite`; identidad de prueba `F00D:BEED` |
+| VIIPER Xbox One | `VIIPER Xbox One Controller` | Clase `XboxComposite`; perfil USB `045E:02EA` y GIP DeviceID/serial único por ejecución |
+| VIIPER Xbox Series | `VIIPER Xbox Series X|S Controller` | Perfil USB `045E:0B12` y GIP DeviceID/serial único por ejecución |
 
 El texto del producto es la señal principal. El padre y el servicio son señales de corroboración y pueden cambiar según la versión de Windows, el controlador instalado o la topología USB; no deben usarse como única condición universal.
 

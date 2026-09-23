@@ -93,11 +93,11 @@ for a PowerShell example.
 ### Xbox One and Xbox Series retained path
 
 The repository contains an explicit, authenticated retained USB/IP composition
-for Xbox One/Series development. It is intentionally separate from the
-generic device factory: the caller supplies the authorized identity, USB
-profile, product strings, GIP device identity, and removal capability. The
-development client is available at
-[`cmd/viiper-xboxone-client`](cmd/viiper-xboxone-client/main.go).
+for Xbox One/Series. Its API endpoint is separate from the generic factory
+because it supplies the authorized identity, USB profile, product strings, GIP
+device identity, and removal capability; it does not require a separate USB
+bus. The development feeder is integrated into the main executable as
+`viiper.exe xboxone-client`, so no second client binary is required.
 
 This path supports the VIIPER broker protocol for semantic input, canonical
 feedback acknowledgements, USB/IP import, and exact registration removal. It is
@@ -312,6 +312,194 @@ go build -o viiper.exe ./cmd/viiper
 
 Run `just build Release` when the version metadata and Windows icon must be
 regenerated as part of the build.
+
+### Live controller matrix
+
+On Windows with `usbip-win2` installed, the repository includes a real
+end-to-end smoke test. It starts an isolated VIIPER server, creates Xbox 360,
+DS4, DualSense and Switch 2 Pro devices, sends every mapped button plus analog
+and motion states, mounts each one with `usbip.exe`, checks `server/status`,
+then adds Xbox One/Series to that same bus through the authenticated retained
+path, executes its input matrix, removes the devices and calls
+`server/shutdown`:
+
+```powershell
+python scripts/test_all_controllers.py --viiper .\viiper.exe --report .\viiper_controller_test_report.md
+```
+
+Use `--no-attach` when only the VIIPER API and input streams should be tested,
+or `--skip-xboxone` when the native usbip-win2 attach prerequisite is not
+available. The Xbox One/Series phase requires the local VIIPER key file. The
+Markdown report contains the identity/status snapshot for every controller and
+the PASS/FAIL result for every button press, release, trigger, stick, touch or
+motion state.
+
+## Uso detallado del sistema
+
+Esta sección describe el flujo completo para ejecutar VIIPER directamente en
+Windows. El mando de Xbox One/Series usa el mismo ejecutable, pero conserva una
+ruta autenticada porque necesita registrar la identidad GIP, el perfil USB y
+los mensajes de activación propios de Xbox. No se necesita un segundo
+ejecutable.
+
+### Requisitos
+
+- Windows 10/11 x64.
+- `usbip-win2` instalado y su controlador aprobado por Windows.
+- Una consola de PowerShell abierta con permisos de administrador para instalar
+  o adjuntar dispositivos USB/IP.
+- Para Xbox One/Series, la clave local de VIIPER en
+  `%APPDATA%\VIIPER\viiper.key.txt`, salvo que se indique otra mediante
+  `--key-file`.
+- `viiper.exe`, ya sea un binario compilado o el binario de desarrollo.
+
+Comprueba que el cliente USB/IP está disponible antes de iniciar una prueba:
+
+```powershell
+usbip.exe port
+```
+
+### 1. Iniciar el servidor
+
+Desde la carpeta que contiene `viiper.exe`, inicia el servidor en una ventana
+de PowerShell:
+
+```powershell
+.\viiper.exe server `
+  --usb.addr=0.0.0.0:3241 `
+  --api.addr=127.0.0.1:3242 `
+  --api.auto-attach-local-client=true `
+  --api.auto-attach-windows-native=true
+```
+
+El puerto USB/IP es `3241` y la API local de administración es `3242`. La
+opción `--api.auto-attach-windows-native=true` permite que VIIPER gestione el
+adjunto local cuando la configuración de `usbip-win2` lo permite. Si se usa un
+flujo externo con `usbip.exe attach`, puede desactivarse y comprobar el estado
+manualmente.
+
+En otra ventana puedes comprobar que el servidor está escuchando:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 3241
+Test-NetConnection 127.0.0.1 -Port 3242
+```
+
+### 2. Ejecutar Xbox One o Xbox Series
+
+El cliente integrado se ejecuta como subcomando del mismo `viiper.exe` y debe
+conectarse al servidor ya iniciado. El perfil `xboxone` crea:
+
+```text
+VID:PID       045E:02EA
+Producto      VIIPER Xbox One Controller
+```
+
+Ejemplo:
+
+```powershell
+.\viiper.exe xboxone-client `
+  --addr=127.0.0.1:3242 `
+  --key-file="$env:APPDATA\VIIPER\viiper.key.txt" `
+  --profile=xboxone `
+  --input-test `
+  --hold-seconds=3
+```
+
+Para probar el perfil Xbox Series X|S cambia únicamente el perfil:
+
+```powershell
+.\viiper.exe xboxone-client `
+  --addr=127.0.0.1:3242 `
+  --key-file="$env:APPDATA\VIIPER\viiper.key.txt" `
+  --profile=xboxseries `
+  --input-test `
+  --hold-seconds=3
+```
+
+El perfil Xbox Series crea:
+
+```text
+VID:PID       045E:0B12
+Producto      VIIPER Xbox Series X|S Controller
+```
+
+Opciones útiles del cliente:
+
+| Opción | Uso |
+| --- | --- |
+| `--addr` | Dirección de la API VIIPER, normalmente `127.0.0.1:3242`. |
+| `--key-file` | Ruta de la clave autorizada para la sesión Xbox. |
+| `--profile` | `xboxone` o `xboxseries`. |
+| `--bus-id` | Reutiliza un bus existente; si se omite, el cliente crea uno. |
+| `--input-test` | Envía una matriz de botones, sticks, gatillos y estados de entrada. |
+| `--hold-seconds` | Tiempo que mantiene activo cada estado de la prueba. |
+| `--pause-before-activate` | Pausa antes de activar el dispositivo para inspección manual. |
+
+El cliente Xbox registra la identidad, negocia la activación, abre el stream de
+entrada, envía los estados de prueba y elimina exactamente su dispositivo al
+terminar. Si se cierra con `Ctrl+C`, vuelve a ejecutar `server/status` y retira
+el dispositivo retenido antes de iniciar otra prueba.
+
+### 3. Probar todos los mandos y generar un reporte
+
+El smoke test crea y prueba Xbox 360, DualShock 4, DualSense, Switch 2 Pro y
+Xbox One/Series. También comprueba la identidad del dispositivo, el bus, el
+puerto USB/IP, el estado de importación y el stream de entrada:
+
+```powershell
+python scripts/test_all_controllers.py `
+  --viiper .\viiper.exe `
+  --report .\viiper_controller_test_report.md
+```
+
+El perfil por defecto para la fase Xbox es `xboxone`. Para probar Xbox Series:
+
+```powershell
+python scripts/test_all_controllers.py `
+  --viiper .\viiper.exe `
+  --xbox-profile xboxseries `
+  --report .\viiper_controller_test_report_series.md
+```
+
+Usa `--skip-xboxone` si sólo quieres probar los cuatro dispositivos genéricos,
+`--no-attach` para probar API y streams sin montar USB/IP, o
+`--xboxone-client <ruta>` únicamente si necesitas utilizar un cliente Xbox
+externo heredado. El cliente integrado es la ruta recomendada.
+
+### 4. Consultar, reiniciar y cerrar el servicio
+
+VIIPER incluye comandos de ciclo de vida internos; no es necesario usar
+`taskkill`:
+
+- `server/status`: devuelve listeners, buses, dispositivos, alias USB/IP,
+  `usbipImported` y streams de entrada activos.
+- `server/restart`: cierra y vuelve a abrir los listeners dentro del mismo
+  proceso. Después del reinicio puede ser necesario recrear o reanexar los
+  dispositivos.
+- `server/shutdown`: cierra ordenadamente API, USB/IP, streams y el proceso
+  del servidor.
+
+Las solicitudes de administración se envían a la API local como una ruta
+terminada en byte NUL. Para integraciones, consulta
+[docs/api/overview.md](docs/api/overview.md); el cliente de prueba ya realiza
+estas operaciones automáticamente al finalizar.
+
+### 5. Interpretar la identidad y el bus
+
+Para diferenciar virtuales de físicos en Windows, usa primero
+`DEVPKEY_Device_BusReportedDeviceDesc` y busca el texto `VIIPER ... Controller`.
+VID/PID, fabricante, padre PnP y servicio son datos de apoyo, no la señal
+principal.
+
+En los mandos genéricos el reporte normalmente muestra un bus y puerto
+numéricos, por ejemplo `usbipBusId=1-5` y `usbipPort=[5]`. Xbox One/Series
+también comparte el bus VIIPER cuando se le pasa `--bus-id`, pero conserva un
+alias USB/IP protegido de la forma `x1-...` para su registro autenticado. Ese
+alias no significa que se haya creado otro bus ni que el mando esté usando una
+identidad de laboratorio; es el identificador interno de la exportación
+retenida. El reporte muestra ambos valores para que el bus numérico pueda
+compararse con los demás sin perder la identidad real del endpoint Xbox.
 
 Client bindings are generated for TypeScript, C#, C++, and Rust. Run code
 generation whenever a public device-state or feedback contract changes, then
