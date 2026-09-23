@@ -5,7 +5,7 @@
 Ensure you have:
 
 1. **USBIP installed** on your system (see [Installation](installation.md#requirements))
-2. **VIIPER binary** downloaded from [GitHub Releases](https://github.com/Alia5/VIIPER/releases) or [built from source](installation.md#building-from-source)
+2. **VIIPER binary** downloaded from [hbashton/VIIPER Releases](https://github.com/hbashton/VIIPER/releases) or [built from source](installation.md#building-from-source)
 
 ## Starting the Server
 
@@ -17,7 +17,7 @@ viiper server
 
 This starts two services:
 
-- **USBIP Server** on port `3241` (standard USBIP protocol)
+- **USBIP Server** on `127.0.0.1:3241` (standard USBIP protocol)
 - **VIIPER API Server** on port `3242` (management and device interactions)
 
 !!! warning "Authentication for Remote Connections"
@@ -33,6 +33,12 @@ This starts two services:
     All authenticated connections use **ChaCha20-Poly1305 encryption** to protect against man-in-the-middle attacks.
     
     You can change the password at any time by editing `viiper.key.txt`.
+
+!!! warning "USB/IP is local-only by default"
+    The password and encryption above protect the API, not the separate USB/IP
+    protocol. USB/IP listens only on `127.0.0.1:3241` by default. If you
+    explicitly bind it to a non-loopback address, place it behind a trusted
+    tunnel, host firewall, or equivalent authenticated network boundary.
 
 !!! tip "Auto-attach Feature"
     By default, VIIPER automatically attaches newly created devices to the local machine. You can disable this with `--api.auto-attach-local-client=false`.  
@@ -204,14 +210,14 @@ Now that you have a working setup:
 
 ```bash
 # Use custom ports
-viiper server --usb.addr=:9000 --api.addr=:9001
+viiper server --usb.addr=127.0.0.1:9000 --api.addr=:9001
 ```
 
 **Permission denied (Linux):**
 
 ```bash
 # Use ports above 1024 or run with sudo
-viiper server --usb.addr=:3241 --api.addr=:3242
+viiper server --usb.addr=127.0.0.1:3241 --api.addr=:3242
 ```
 
 ### Auto-Attach Not Working
@@ -241,7 +247,10 @@ See [Linux Kernel Module Setup](installation.md#linux-kernel-module-setup-for-au
 
 **Windows - USBIP tool not found:**
 
-Download and install [usbip-win2](https://github.com/vadimgrn/usbip-win2) and ensure `usbip.exe` is in your PATH.
+Install the exact signed
+[usbip-win2 0.9.7.7 x64 release](https://github.com/vadimgrn/usbip-win2/releases/tag/v.0.9.7.7).
+Do not mix it with another usbip-win2 userspace or driver version; VIIPER
+checks the live ABI before starting.
 
 ### Device Not Attaching
 

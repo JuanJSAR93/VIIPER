@@ -15,8 +15,9 @@ import (
 	"github.com/Alia5/VIIPER/viiperclient"
 	"github.com/Alia5/VIIPER/virtualbus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	_ "github.com/Alia5/VIIPER/internal/registry" // Register devices
+	_ "github.com/Alia5/VIIPER/internal/devicecatalog" // Register devices
 )
 
 func TestInputReports(t *testing.T) {
@@ -295,7 +296,7 @@ func TestInputReports(t *testing.T) {
 			TransferFlags:     0,
 			TransferBufferLen: 255,
 			StartFrame:        0,
-			NumberOfPackets:   0,
+			NumberOfPackets:   -1,
 			Interval:          0,
 			Setup:             [8]byte{},
 		}
@@ -371,7 +372,7 @@ func TestInputReports(t *testing.T) {
 			if !assert.NoError(t, stream.WriteBinary(&tc.inputState)) {
 				return
 			}
-			got, err := pollInputReport(tc.expectedReport, 750*time.Millisecond)
+			got, err := pollInputReport(tc.expectedReport, viiperTesting.IntegrationTimeout)
 			if !assert.NoError(t, err) {
 				return
 			}
@@ -470,7 +471,7 @@ func TestFeedback(t *testing.T) {
 				return
 			}
 			var buf [7]byte
-			_ = stream.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
+			_ = stream.SetReadDeadline(time.Now().Add(viiperTesting.IntegrationTimeout))
 			_, err := io.ReadFull(stream, buf[:])
 			if !assert.NoError(t, err) {
 				return
@@ -481,5 +482,33 @@ func TestFeedback(t *testing.T) {
 			}
 			assert.Equal(t, tc.outputState, got)
 		})
+	}
+}
+
+func TestOutputCallbackReplaysLatestHostFeedback(t *testing.T) {
+	dev, err := dualshock4.New(nil)
+	require.NoError(t, err)
+
+	dev.HandleTransfer(context.Background(), 3, usbip.DirOut,
+		[]byte{0x05, 0x00, 0x00, 0x00, 0x12, 0xFE, 0x01, 0x02, 0x03, 0x04, 0x05})
+
+	gotCh := make(chan dualshock4.OutputState, 1)
+	dev.SetOutputCallback(func(out dualshock4.OutputState) {
+		gotCh <- out
+	})
+
+	select {
+	case got := <-gotCh:
+		assert.Equal(t, dualshock4.OutputState{
+			RumbleSmall: 0x12,
+			RumbleLarge: 0xFE,
+			LedRed:      0x01,
+			LedGreen:    0x02,
+			LedBlue:     0x03,
+			FlashOn:     0x04,
+			FlashOff:    0x05,
+		}, got)
+	case <-time.After(viiperTesting.IntegrationTimeout):
+		t.Fatal("expected late callback to receive latest host feedback")
 	}
 }

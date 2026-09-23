@@ -3,9 +3,6 @@ package dualsense
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
-	"net"
 	"strings"
 
 	"github.com/Alia5/VIIPER/device"
@@ -14,23 +11,39 @@ import (
 )
 
 func init() {
-	api.RegisterDevice("dualsenseedge", &dsedgehandler{})
+	api.RegisterDevice(DeviceTypeEdgeCombinedAudioDuplexV5, &dsedgehandler{})
+	api.RegisterDevice(DeviceTypeEdgeGamepadOnlyV5,
+		&dsedgehandler{gamepadOnly: true})
+	api.RegisterDevice(DeviceTypeEdgeCombinedAudioDuplexV5Events,
+		&dsedgehandler{micInterfaceEvents: true})
+	api.RegisterDevice(DeviceTypeEdgeCombinedAudioDuplexV5RawInputEvents,
+		&dsedgehandler{micInterfaceEvents: true, physicalInputMetadata: true})
+	api.RegisterDevice(DeviceTypeEdgeGamepadOnlyV5RawInput,
+		&dsedgehandler{gamepadOnly: true, physicalInputMetadata: true})
 }
 
-type dsedgehandler struct{}
+type dsedgehandler struct {
+	gamepadOnly           bool
+	micInterfaceEvents    bool
+	physicalInputMetadata bool
+}
 
 func (h *dsedgehandler) CreateDevice(o *device.CreateOptions) (usb.Device, error) {
 	if o == nil {
 		o = &device.CreateOptions{}
 	}
 
-	metaState := MetaState{
-		ShellColor: DefaultShellColor,
+	metaState := dualSenseCreateState{
+		MetaState: MetaState{ShellColor: DefaultShellColor},
 	}
 	if o.DeviceSpecific != "" {
 		if err := json.Unmarshal([]byte(o.DeviceSpecific), &metaState); err != nil {
 			return nil, fmt.Errorf("invalid device specific JSON: %w", err)
 		}
+	}
+
+	if _, err := selectRearHapticsConverter(metaState.HapticsConverter, h.gamepadOnly); err != nil {
+		return nil, err
 	}
 
 	serial := metaState.SerialNumber
@@ -43,7 +56,11 @@ func (h *dsedgehandler) CreateDevice(o *device.CreateOptions) (usb.Device, error
 			serial = serial[:4] + code[:2] + serial[6:]
 		}
 	}
+	identityMu.Lock()
 	if _, ok := serials[serial]; ok {
+		if len(serial) < 2 {
+			serial = DefaultSerialNumberDSEdge
+		}
 		for i := 1; i < 16; i++ {
 			newSerial := fmt.Sprintf("%s%02X", serial[:len(serial)-2], i)
 			if _, exists := serials[newSerial]; !exists {
@@ -60,6 +77,9 @@ func (h *dsedgehandler) CreateDevice(o *device.CreateOptions) (usb.Device, error
 		mac = DefaultMACAddressDSEdge
 	}
 	if _, ok := macs[mac]; ok {
+		if len(mac) < 2 {
+			mac = DefaultMACAddressDSEdge
+		}
 		prefix := mac[:len(mac)-2]
 		for i := 1; i <= 16; i++ {
 			candidate := fmt.Sprintf("%s%02X", prefix, i)
@@ -71,72 +91,44 @@ func (h *dsedgehandler) CreateDevice(o *device.CreateOptions) (usb.Device, error
 	}
 	metaState.MACAddress = mac
 	macs[mac] = struct{}{}
+	identityMu.Unlock()
 
 	b, err := json.Marshal(metaState)
 	if err != nil {
+		identityMu.Lock()
+		delete(serials, serial)
+		delete(macs, mac)
+		identityMu.Unlock()
 		return nil, fmt.Errorf("marshal meta state: %w", err)
 	}
 	o.DeviceSpecific = string(b)
 
-	return new(o, true)
+	dse, err := new(o, true)
+	if err != nil {
+		identityMu.Lock()
+		delete(serials, serial)
+		delete(macs, mac)
+		identityMu.Unlock()
+		return nil, err
+	}
+	if h.gamepadOnly {
+		dse.descriptor = makeGamepadOnlyDescriptor(true)
+		if h.physicalInputMetadata {
+			dse.deviceType = DeviceTypeEdgeGamepadOnlyV5RawInput
+		} else {
+			dse.deviceType = DeviceTypeEdgeGamepadOnlyV5
+		}
+	} else if h.physicalInputMetadata {
+		dse.deviceType = DeviceTypeEdgeCombinedAudioDuplexV5RawInputEvents
+	} else if h.micInterfaceEvents {
+		dse.deviceType = DeviceTypeEdgeCombinedAudioDuplexV5Events
+	}
+	return dse, nil
 }
 
 func (h *dsedgehandler) StreamHandler() api.StreamHandlerFunc {
-	return func(conn net.Conn, devPtr *usb.Device, logger *slog.Logger) error {
-		defer func() {
-			if devPtr == nil || *devPtr == nil {
-				return
-			}
-			dse, ok := (*devPtr).(*DualSense)
-			if !ok {
-				slog.Warn("device is not DualSenseEdge on disconnect")
-				return
-			}
-			dse.mtx.Lock()
-			serial := dse.metaState.SerialNumber
-			mac := dse.metaState.MACAddress
-			dse.mtx.Unlock()
-			delete(serials, serial)
-			delete(macs, mac)
-			slog.Debug("DualSenseEdge disconnected, serial/mac released", "serial", serial, "mac", mac)
-		}()
-
-		if devPtr == nil || *devPtr == nil {
-			return fmt.Errorf("nil device")
-		}
-		dse, ok := (*devPtr).(*DualSense)
-		if !ok {
-			return fmt.Errorf("%w: expected DualSenseEdge", device.ErrWrongDeviceType)
-		}
-
-		dse.SetOutputCallback(func(feedback OutputState) {
-			data, err := feedback.MarshalBinary()
-			if err != nil {
-				logger.Error("failed to marshal feedback", "error", err)
-				return
-			}
-			if _, err := conn.Write(data); err != nil {
-				logger.Error("failed to send feedback", "error", err)
-			}
-		})
-
-		buf := make([]byte, InputStateSize)
-		for {
-			if _, err := io.ReadFull(conn, buf); err != nil {
-				if err == io.EOF {
-					logger.Info("client disconnected")
-					return nil
-				}
-				return fmt.Errorf("read input state: %w", err)
-			}
-
-			var state InputState
-			if err := state.UnmarshalBinary(buf); err != nil {
-				return fmt.Errorf("unmarshal input state: %w", err)
-			}
-			dse.UpdateInputState(&state)
-		}
-	}
+	return dualSenseV5StreamHandler("DualSense Edge", h.micInterfaceEvents,
+		h.physicalInputMetadata)
 }
 
 func (h *dsedgehandler) UpdateMetaState(meta string, dev *usb.Device) error {
@@ -144,9 +136,9 @@ func (h *dsedgehandler) UpdateMetaState(meta string, dev *usb.Device) error {
 	if !ok {
 		return fmt.Errorf("%w: expected DualSenseEdge", device.ErrWrongDeviceType)
 	}
-	dse.mtx.Lock()
+	dse.metaMu.Lock()
 	current := *dse.metaState
-	dse.mtx.Unlock()
+	dse.metaMu.Unlock()
 	if err := json.Unmarshal([]byte(meta), &current); err != nil {
 		return fmt.Errorf("unmarshal meta state: %w", err)
 	}

@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
+	"time"
 
-	"fyne.io/systray"
+	"github.com/Alia5/VIIPER/internal/codegen/common"
+	"github.com/Alia5/VIIPER/internal/tray/systray"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -24,49 +27,94 @@ const (
 	runValueKey = "VIIPER"
 )
 
-func Run(ctx context.Context, shutdown func()) {
-	go systray.Run(func() {
+func Run(ctx context.Context, shutdown func()) func() {
+	ready := make(chan struct{})
+	stopped := make(chan struct{})
+	var readyOnce sync.Once
+	var stoppedOnce sync.Once
+
+	go func() {
+		// The Win32 window and its message pump must remain on the same OS
+		// thread. A movable goroutine can intermittently lose menu input.
 		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		systray.Run(func() {
 
-		systray.SetIcon(trayIcon)
-		systray.SetTooltip("VIIPER")
+			systray.SetIcon(trayIcon)
+			systray.SetTooltip("VIIPER")
 
-		version := readVersion()
-		infoStr := fmt.Sprintf("VIIPER - %s", version)
-		versionItem := systray.AddMenuItem(infoStr, infoStr)
-		versionItem.Disable()
+			version := readVersion()
+			infoStr := fmt.Sprintf("VIIPER - %s", version)
+			versionItem := systray.AddMenuItem(infoStr, infoStr)
+			versionItem.Disable()
 
-		systray.AddSeparator()
+			systray.AddSeparator()
 
-		autoStartItem := systray.AddMenuItemCheckbox("Run at startup", "", autoStartEnabled())
+			autoStartItem := systray.AddMenuItemCheckbox("Run at startup", "", autoStartEnabled())
 
-		systray.AddSeparator()
+			systray.AddSeparator()
 
-		exitItem := systray.AddMenuItem("Quit", "Exit VIIPER")
+			exitItem := systray.AddMenuItem("Quit", "Exit VIIPER")
+			readyOnce.Do(func() { close(ready) })
 
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-autoStartItem.ClickedCh:
-					if toggleAutoStart() {
-						autoStartItem.Check()
-					} else {
-						autoStartItem.Uncheck()
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-autoStartItem.ClickedCh:
+						if toggleAutoStart() {
+							autoStartItem.Check()
+						} else {
+							autoStartItem.Uncheck()
+						}
+					case <-exitItem.ClickedCh:
+						shutdown()
+						return
 					}
-				case <-exitItem.ClickedCh:
-					systray.Quit()
-					shutdown()
-					return
 				}
-			}
-		}()
+			}()
 
-	}, func() {})
+		}, func() {
+			stoppedOnce.Do(func() { close(stopped) })
+		})
+	}()
+
+	go func() {
+		<-ctx.Done()
+		select {
+		case <-ready:
+			systray.Quit()
+		case <-stopped:
+		}
+	}()
+
+	return func() {
+		select {
+		case <-ready:
+			systray.Quit()
+		case <-stopped:
+			return
+		case <-time.After(2 * time.Second):
+			return
+		}
+
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func readVersion() string {
+	// Release builds inject this value explicitly. debug.ReadBuildInfo reports
+	// "(devel)" for a binary built directly from a checkout, even when the
+	// release linker metadata is present, which previously made the tray show
+	// "VIIPER - dev" for packaged release builds.
+	if version, err := common.GetVersion(); err == nil &&
+		version != "0.0.1-dev" {
+		return version
+	}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		v := info.Main.Version
 		if v != "" && v != "(devel)" {

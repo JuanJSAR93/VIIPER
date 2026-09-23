@@ -2,7 +2,7 @@ name: Dev Snapshot Build
 
 on:
     push:
-        branches: ["main"]
+        branches: ["main", "microphone-rebuild", "ds4-audio-emulation"]
 
 permissions:
     contents: write
@@ -122,19 +122,19 @@ jobs:
                       ## Install / Update
 
                       <details>
-                      <summary><b>Windows (PowerShell)</b></summary>
+                      <summary><b>Windows (DS4Windows)</b></summary>
 
-                      ```powershell
-                      irm https://alia5.github.io/VIIPER/main/install.ps1 | iex
-                      ```
-                      Installs / updates to `%LOCALAPPDATA%\VIIPER\viiper.exe`
+                      Install with the matching DS4Windows all-in-one installer,
+                      or use **Settings > VIIPER Virtual Controller Support >
+                      Install / Repair**. The standalone Windows script is
+                      developer-only so it cannot create a competing backend.
                       </details>
 
                       <details>
                       <summary><b>Linux</b></summary>
 
                       ```bash
-                      curl -fsSL https://alia5.github.io/VIIPER/main/install.sh | sh
+                      curl -fsSL https://raw.githubusercontent.com/hbashton/VIIPER/main/scripts/install.sh | sh
                       ```
                       Installs / updates to `/usr/local/bin/viiper`
                       </details>

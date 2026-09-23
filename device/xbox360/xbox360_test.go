@@ -8,14 +8,16 @@ import (
 
 	viiperTesting "github.com/Alia5/VIIPER/_testing"
 	"github.com/Alia5/VIIPER/device/xbox360"
+	"github.com/Alia5/VIIPER/internal/inputpresentation"
 	"github.com/Alia5/VIIPER/internal/server/api"
 	"github.com/Alia5/VIIPER/internal/server/api/handler"
 	"github.com/Alia5/VIIPER/usbip"
 	"github.com/Alia5/VIIPER/viiperclient"
 	"github.com/Alia5/VIIPER/virtualbus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	_ "github.com/Alia5/VIIPER/internal/registry" // Register devices
+	_ "github.com/Alia5/VIIPER/internal/devicecatalog" // Register devices
 )
 
 func TestInputReports(t *testing.T) {
@@ -374,7 +376,7 @@ func TestInputReports(t *testing.T) {
 			if !assert.NoError(t, stream.WriteBinary(&tc.inputState)) {
 				return
 			}
-			got, err := usbipClient.PollInputReport(imp.Conn, tc.expectedReport, 750*time.Millisecond)
+			got, err := usbipClient.PollInputReport(imp.Conn, tc.expectedReport, viiperTesting.IntegrationTimeout)
 			if !assert.NoError(t, err) {
 				return
 			}
@@ -466,7 +468,7 @@ func TestRumble(t *testing.T) {
 				return
 			}
 			var buf [2]byte
-			_ = stream.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
+			_ = stream.SetReadDeadline(time.Now().Add(viiperTesting.IntegrationTimeout))
 			_, err := io.ReadFull(stream, buf[:])
 			if !assert.NoError(t, err) {
 				return
@@ -476,4 +478,228 @@ func TestRumble(t *testing.T) {
 		})
 	}
 
+}
+
+func TestRumbleCallbackReplaysLatestHostState(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+
+	// The all-zero state is the first packet Windows normally sends. Keep an
+	// explicit seen bit so it is replayed even though it equals the Go zero value.
+	dev.HandleTransfer(context.Background(), 1, usbip.DirOut,
+		[]byte{0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+
+	gotCh := make(chan xbox360.XRumbleState, 1)
+	dev.SetRumbleCallback(func(rumble xbox360.XRumbleState) {
+		gotCh <- rumble
+	})
+
+	select {
+	case got := <-gotCh:
+		assert.Equal(t, xbox360.XRumbleState{}, got)
+	case <-time.After(viiperTesting.IntegrationTimeout):
+		t.Fatal("expected late callback to receive latest host rumble state")
+	}
+}
+
+func TestRumbleCallbackDoesNotInventInitialFeedback(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+
+	gotCh := make(chan xbox360.XRumbleState, 1)
+	dev.SetRumbleCallback(func(rumble xbox360.XRumbleState) {
+		gotCh <- rumble
+	})
+
+	select {
+	case got := <-gotCh:
+		t.Fatalf("unexpected feedback before host output: %+v", got)
+	default:
+	}
+}
+
+func TestInputSnapshotRepeatsWithoutAnotherFeederWrite(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+
+	state := xbox360.InputState{
+		Buttons: xbox360.ButtonA | xbox360.ButtonDPadRight,
+		LT:      41,
+		LX:      -12345,
+	}
+	dev.UpdateInputState(state)
+
+	first := dev.HandleTransfer(context.Background(), 1, usbip.DirIn, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	second := dev.HandleTransfer(ctx, 1, usbip.DirIn, nil)
+	require.Equal(t, state.BuildReport(), first)
+	require.Equal(t, first, second)
+	require.GreaterOrEqual(t, time.Since(started), 2*time.Millisecond,
+		"an idle XInput poll must wait for its bounded service-window fallback")
+}
+
+func TestFreshInputStateWakesPendingPoll(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+	// Consume the initial snapshot notification so the next poll waits for a
+	// genuinely fresh feeder state.
+	require.NotNil(t, dev.HandleTransfer(context.Background(), 1, usbip.DirIn, nil))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan []byte, 1)
+	go func() {
+		done <- dev.HandleTransfer(ctx, 1, usbip.DirIn, nil)
+	}()
+
+	state := xbox360.InputState{Buttons: xbox360.ButtonA, LX: 1234}
+	dev.UpdateInputState(state)
+	select {
+	case report := <-done:
+		require.Equal(t, state.BuildReport(), report)
+	case <-time.After(25 * time.Millisecond):
+		t.Fatal("fresh Xbox input did not wake the pending host poll")
+	}
+}
+
+func TestAllReservedInputBytesReachUsbReport(t *testing.T) {
+	state := xbox360.InputState{
+		Reserved: [6]byte{1, 2, 3, 4, 5, 6},
+	}
+
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6},
+		state.BuildReport()[14:20])
+	encoded, err := state.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6}, encoded[14:20])
+
+	var decoded xbox360.InputState
+	require.NoError(t, decoded.UnmarshalBinary(encoded))
+	require.Equal(t, state, decoded)
+}
+
+func TestInputPresentationPreservesTriggerPeakBeforeRelease(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+
+	states := []xbox360.InputState{
+		{Buttons: xbox360.ButtonA, LT: 10},
+		{Buttons: xbox360.ButtonA, LT: 255},
+		{},
+	}
+	for _, state := range states {
+		require.True(t, dev.UpdateInputState(state))
+	}
+
+	var report [20]byte
+	for index, state := range states {
+		claim := dev.ClaimInputPresentation(report[:], time.Now())
+		require.True(t, claim.Valid(), "claim %d", index)
+		require.True(t, claim.Ordered, "claim %d", index)
+		require.Equal(t, state.BuildReport(), report[:], "claim %d", index)
+		require.True(t, dev.ResolveInputPresentation(
+			claim, inputpresentation.OutcomeCommit, time.Now()))
+	}
+}
+
+func TestInputPresentationOrderedDeferIsByteExact(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+	require.True(t, dev.UpdateInputState(xbox360.InputState{
+		Buttons: xbox360.ButtonA, LX: 1234,
+	}))
+
+	var first, retry [20]byte
+	claim := dev.ClaimInputPresentation(first[:], time.Now())
+	require.True(t, claim.Valid())
+	require.True(t, dev.ResolveInputPresentation(
+		claim, inputpresentation.OutcomeDefer, time.Now()))
+	require.True(t, dev.UpdateInputState(xbox360.InputState{
+		Buttons: xbox360.ButtonA, LX: -2345,
+	}))
+	retryClaim := dev.ClaimInputPresentation(retry[:], time.Now())
+	require.True(t, retryClaim.Valid())
+	require.NotEqual(t, claim.Token, retryClaim.Token)
+	require.Equal(t, first, retry)
+	require.True(t, dev.ResolveInputPresentation(
+		retryClaim, inputpresentation.OutcomeCommit, time.Now()))
+}
+
+func TestInputPresentationNoAgeOverflowFaultsNeutralThenResynchronizes(
+	t *testing.T,
+) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+
+	for index := 0; index < inputpresentation.FixedReportTransitionCapacity; index++ {
+		state := xbox360.InputState{}
+		if index%2 == 0 {
+			state.Buttons = xbox360.ButtonA
+		}
+		require.True(t, dev.UpdateInputState(state), "publish edge %d", index)
+	}
+	overflowed := xbox360.InputState{Buttons: xbox360.ButtonA}
+	require.False(t, dev.UpdateInputState(overflowed),
+		"the sixty-fifth unconsumed edge exceeded the bounded journal")
+	snapshot := dev.InputSchedulerSnapshot()
+	require.Equal(t, 1, snapshot.TransitionDepth)
+	require.Equal(t, uint64(1), snapshot.Overflows)
+	require.Zero(t, snapshot.MaximumOrderedAge,
+		"production compatibility constructor unexpectedly enabled strict age")
+	require.True(t, snapshot.MandatoryNeutral,
+		"capacity overflow must fail closed even without an age deadline")
+	require.False(t, snapshot.Resynchronization)
+	require.Equal(t, inputpresentation.FixedReportFaultOverflow,
+		snapshot.LastFault)
+
+	var report [20]byte
+	claim := dev.ClaimInputPresentation(report[:], time.Now())
+	require.True(t, claim.Valid())
+	require.True(t, claim.Ordered)
+	require.Equal(t, xbox360.NewInputState().BuildReport(), report[:])
+	require.True(t, dev.CanAdmitInputPresentation(claim, time.Now()))
+	require.True(t, dev.ResolveInputPresentation(
+		claim, inputpresentation.OutcomeCommit, time.Now()))
+	require.False(t, dev.InputSchedulerSnapshot().Resynchronization,
+		"the freshest rejected complete state was not resynchronized after neutral")
+
+	// A complete post-neutral state is the new baseline; none of the ambiguous
+	// full journal is replayed and the rejected press cannot collapse with its
+	// subsequent release into a lost tap.
+	claim = dev.ClaimInputPresentation(report[:], time.Now())
+	require.True(t, claim.Valid())
+	require.False(t, claim.Ordered)
+	require.Equal(t, overflowed.BuildReport(), report[:])
+	require.True(t, dev.CanAdmitInputPresentation(claim, time.Now()))
+	require.True(t, dev.ResolveInputPresentation(
+		claim, inputpresentation.OutcomeCommit, time.Now()))
+
+	snapshot = dev.InputSchedulerSnapshot()
+	require.Zero(t, snapshot.TransitionDepth)
+	require.Equal(t, uint64(1), snapshot.Overflows)
+	require.Equal(t, inputpresentation.FixedReportFaultOverflow,
+		snapshot.LastFault)
+}
+
+func TestInputPresentationHotPathAllocatesZero(t *testing.T) {
+	dev, err := xbox360.New(nil)
+	require.NoError(t, err)
+	var report [20]byte
+	state := xbox360.InputState{LX: 1}
+	allocations := testing.AllocsPerRun(1000, func() {
+		state.LX = -state.LX
+		if !dev.UpdateInputState(state) {
+			panic("publish failed")
+		}
+		claim := dev.ClaimInputPresentation(report[:], time.Now())
+		if !claim.Valid() ||
+			!dev.CanAdmitInputPresentation(claim, time.Now()) ||
+			!dev.ResolveInputPresentation(
+				claim, inputpresentation.OutcomeCommit, time.Now()) {
+			panic("claim cycle failed")
+		}
+	})
+	require.Zero(t, allocations)
 }

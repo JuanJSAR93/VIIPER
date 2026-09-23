@@ -20,12 +20,39 @@ gyro/accelerometer data, and HD rumble output.
 
     ### Input State
 
-    - 27-byte packets, little-endian layout:
+    - 24-byte packets, little-endian layout:
         - Buttons: `uint32` bitfield
         - Sticks: `LX`, `LY`, `RX`, `RY` as raw `uint16` values, clamped to `0..4095`
         - Accelerometer: `AccelX`, `AccelY`, `AccelZ` as raw `int16` report values
         - Gyroscope: `GyroX`, `GyroY`, `GyroZ` as raw `int16` report values
-        - Battery: `BatteryLevel` (`0..9`), `Charging`, `ExternalPower`
+
+    Battery and power values are not part of the 24-byte streaming input
+    packet. Initial values use creation-time `MetaState`; live values use the
+    separate `ns2pro-status-v1` management contract below. Clients must not
+    append status fields to this fixed-size stream.
+
+    ### Runtime power status v1
+
+    Send one complete JSON snapshot to
+    `bus/{busId}/{devId}/ns2pro-status-v1`:
+
+    ```json
+    {
+      "version": 1,
+      "batteryLevel": 5,
+      "charging": false,
+      "externalPower": false,
+      "batteryVolts": 3175
+    }
+    ```
+
+    Version, all four status fields, battery level `0..9`, and voltage
+    `2500..5000` mV are required. Unknown fields, unsupported versions,
+    incomplete payloads, wrong device types, and invalid ranges fail closed.
+    The update preserves serial identity and changes only newly encoded input
+    reports; a report already selected for USB presentation may finish with
+    its prior status. The API answers
+    `{"version":1,"updated":true}` on success.
 
     ### Feedback
 
@@ -71,6 +98,7 @@ gyro/accelerometer data, and HD rumble output.
     | --- | --- |
     | `CreateNS2ProDevice(...)` | Create a virtual Switch 2 Pro Controller |
     | `SetNS2ProDeviceState(handle, state)` | Push input state |
+    | `SetNS2ProRuntimeStatusV1(handle, status)` | Replace live power status without changing input-wire size or identity |
     | `SetNS2ProOutputCallback(handle, cb)` | Register output (rumble/LED) callback |
     | `RemoveNS2ProDevice(handle)` | Remove the device |
 
@@ -106,6 +134,21 @@ gyro/accelerometer data, and HD rumble output.
         uint8_t     ExternalPower; // 0 = battery only
         uint16_t    BatteryVolts;  // mV; 0 = use default (3800)
     } NS2ProMetaState;
+    ```
+
+    ## Runtime status v1
+
+    Runtime battery level zero is valid and is therefore distinct from the
+    creation-time zero/default convention.
+
+    ```c
+    typedef struct {
+        uint16_t Version;       // must be 1
+        uint8_t  BatteryLevel;  // 0-9
+        uint8_t  Charging;      // 0 = not charging
+        uint8_t  ExternalPower; // 0 = battery only
+        uint16_t BatteryVolts;  // 2500-5000 mV
+    } NS2ProRuntimeStatusV1;
     ```
 
     ## Output callback

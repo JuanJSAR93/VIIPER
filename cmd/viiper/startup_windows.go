@@ -11,8 +11,11 @@ import (
 
 func init() {
 	if util.IsRunFromGUI() {
+		// Hide the console before configuration, driver probing, or server
+		// startup can make a scheduled launch flash on the desktop.
+		util.HideConsoleWindow()
 		args := os.Args
-		if len(args) < 2 || args[1] != "server" {
+		if len(args) < 2 {
 			slog.Info("Detected GUI startup, injecting 'server' argument")
 			slog.Warn("Run from a CLI for more options!")
 			newArgs := make([]string, 0, len(args)+1)

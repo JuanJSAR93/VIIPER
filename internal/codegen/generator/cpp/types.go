@@ -39,11 +39,23 @@ struct {{pascalcase .Name}} {
 {{- end}}
 
     static {{pascalcase .Name}} from_json(const json_type& j) {
-        {{pascalcase .Name}} result;
+        {{pascalcase .Name}} result{};
 {{- range .Fields}}
 {{- if and .Optional (eq .TypeKind "map")}}
         if (j.contains("{{.JSONName}}") && !j["{{.JSONName}}"].is_null()) {
             result.{{camelcase .Name}} = j["{{.JSONName}}"];
+        } else {
+            result.{{camelcase .Name}} = std::nullopt;
+        }
+{{- else if and .Optional (eq .TypeKind "slice")}}
+        if (j.contains("{{.JSONName}}") && !j["{{.JSONName}}"].is_null()) {
+            result.{{camelcase .Name}} = detail::get_array<{{cpptype .Type | sliceElementType}}>(j, "{{.JSONName}}");
+        } else {
+            result.{{camelcase .Name}} = std::nullopt;
+        }
+{{- else if and .Optional (isCustomType .Type)}}
+        if (j.contains("{{.JSONName}}") && !j["{{.JSONName}}"].is_null()) {
+            result.{{camelcase .Name}} = {{fieldcpptype . | unwrapOptional}}::from_json(j["{{.JSONName}}"]);
         } else {
             result.{{camelcase .Name}} = std::nullopt;
         }
@@ -69,9 +81,25 @@ struct {{pascalcase .Name}} {
     [[nodiscard]] json_type to_json() const {
         json_type j;
 {{- range .Fields}}
-{{- if .Optional}}
+{{- if and .Optional (eq .TypeKind "slice")}}
         if ({{camelcase .Name}}.has_value()) {
+            json_type arr = json_type::array();
+            for (const auto& item : {{camelcase .Name}}.value()) {
+                {{- if isCustomType .Type}}
+                arr.push_back(item.to_json());
+                {{- else}}
+                arr.push_back(item);
+                {{- end}}
+            }
+            j["{{.JSONName}}"] = std::move(arr);
+        }
+{{- else if .Optional}}
+        if ({{camelcase .Name}}.has_value()) {
+            {{- if isCustomType .Type}}
+            j["{{.JSONName}}"] = {{camelcase .Name}}.value().to_json();
+            {{- else}}
             j["{{.JSONName}}"] = {{camelcase .Name}}.value();
+            {{- end}}
         }
 {{- else if eq .TypeKind "slice"}}
         {
@@ -85,6 +113,8 @@ struct {{pascalcase .Name}} {
             }
             j["{{.JSONName}}"] = std::move(arr);
         }
+{{- else if isCustomType .Type}}
+        j["{{.JSONName}}"] = {{camelcase .Name}}.to_json();
 {{- else}}
         j["{{.JSONName}}"] = {{camelcase .Name}};
 {{- end}}

@@ -3,6 +3,7 @@ package dualsense
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"time"
@@ -19,11 +20,25 @@ type InputState struct {
 
 	Touch1X, Touch1Y uint16
 	Touch1Active     bool
+	Touch1Tracking   uint8
 	Touch2X, Touch2Y uint16
 	Touch2Active     bool
+	Touch2Tracking   uint8
 
 	GyroX, GyroY, GyroZ    int16
 	AccelX, AccelY, AccelZ int16
+
+	// PhysicalInputMetadata is the normalized physical DualSense input report
+	// bytes 41:56. It intentionally ends before the physical report's AES-CMAC
+	// at bytes 56:64: rewriting virtual counters/connect state invalidates that
+	// tag and VIIPER does not possess the controller key needed to recompute it.
+	// PhysicalSensorTimestamp is bytes 28:32 from that same report.
+	// The fields are authoritative only when PhysicalMetadataValid is true and
+	// travel through the input scheduler as part of this complete state.
+	PhysicalMetadataValid      bool
+	PhysicalMetadataEdgeLayout bool
+	PhysicalSensorTimestamp    uint32
+	PhysicalInputMetadata      [InputStatePhysicalMetadataSize]byte
 }
 
 // NewInputState returns a DualSense input state in its neutral/resting state.
@@ -36,8 +51,14 @@ func NewInputState() *InputState {
 	}
 }
 
-func (s *InputState) MarshalBinary() ([]byte, error) {
-	b := make([]byte, InputStateSize)
+// MarshalInto writes the fixed-width V5 input state into destination without
+// allocating. It returns io.ErrShortBuffer when destination cannot hold the
+// complete state; partial V5 states are never produced.
+func (s *InputState) MarshalInto(destination []byte) error {
+	if len(destination) < InputStateSize {
+		return io.ErrShortBuffer
+	}
+	b := destination[:InputStateSize]
 	b[0] = uint8(s.LX)
 	b[1] = uint8(s.LY)
 	b[2] = uint8(s.RX)
@@ -48,24 +69,61 @@ func (s *InputState) MarshalBinary() ([]byte, error) {
 	b[10] = s.R2
 	binary.LittleEndian.PutUint16(b[11:13], s.Touch1X)
 	binary.LittleEndian.PutUint16(b[13:15], s.Touch1Y)
-	if s.Touch1Active {
-		b[15] = 1
-	}
+	b[15] = encodeTouchStatus(s.Touch1Active, s.Touch1Tracking)
 	binary.LittleEndian.PutUint16(b[16:18], s.Touch2X)
 	binary.LittleEndian.PutUint16(b[18:20], s.Touch2Y)
-	if s.Touch2Active {
-		b[20] = 1
-	}
+	b[20] = encodeTouchStatus(s.Touch2Active, s.Touch2Tracking)
 	binary.LittleEndian.PutUint16(b[21:23], uint16(s.GyroX))
 	binary.LittleEndian.PutUint16(b[23:25], uint16(s.GyroY))
 	binary.LittleEndian.PutUint16(b[25:27], uint16(s.GyroZ))
 	binary.LittleEndian.PutUint16(b[27:29], uint16(s.AccelX))
 	binary.LittleEndian.PutUint16(b[29:31], uint16(s.AccelY))
 	binary.LittleEndian.PutUint16(b[31:33], uint16(s.AccelZ))
-	return b, nil
+	return nil
+}
+
+func (s *InputState) MarshalBinary() ([]byte, error) {
+	b := make([]byte, InputStateSize)
+	return b, s.MarshalInto(b)
+}
+
+// MarshalRawInputInto writes the opt-in ...v5rawinput... input payload. Legacy
+// clients continue to use MarshalInto and the exact 33-byte payload.
+func (s *InputState) MarshalRawInputInto(destination []byte) error {
+	if len(destination) < InputStateRawSize {
+		return io.ErrShortBuffer
+	}
+	b := destination[:InputStateRawSize]
+	clear(b)
+	if err := s.MarshalInto(b[:InputStateSize]); err != nil {
+		return err
+	}
+	if !s.PhysicalMetadataValid {
+		if s.PhysicalMetadataEdgeLayout {
+			return fmt.Errorf("physical Edge metadata layout requires valid metadata")
+		}
+		return nil
+	}
+	b[InputStateRawFlagsOffset] = InputStatePhysicalMetadataValid
+	if s.PhysicalMetadataEdgeLayout {
+		b[InputStateRawFlagsOffset] |= InputStatePhysicalMetadataEdgeLayout
+	}
+	binary.LittleEndian.PutUint32(
+		b[InputStatePhysicalSensorOffset:InputStatePhysicalMetadataOffset],
+		s.PhysicalSensorTimestamp)
+	copy(b[InputStatePhysicalMetadataOffset:InputStateRawSize],
+		s.PhysicalInputMetadata[:])
+	return nil
 }
 
 func (s *InputState) UnmarshalBinary(data []byte) error {
+	if len(data) != InputStateSize && len(data) != InputStateRawSize {
+		if len(data) < InputStateSize {
+			return io.ErrUnexpectedEOF
+		}
+		return fmt.Errorf("invalid DualSense input state length %d, expected %d or %d",
+			len(data), InputStateSize, InputStateRawSize)
+	}
 	if len(data) < InputStateSize {
 		return io.ErrUnexpectedEOF
 	}
@@ -79,21 +137,45 @@ func (s *InputState) UnmarshalBinary(data []byte) error {
 	s.R2 = data[10]
 	s.Touch1X = binary.LittleEndian.Uint16(data[11:13])
 	s.Touch1Y = binary.LittleEndian.Uint16(data[13:15])
-	s.Touch1Active = data[15] != 0
+	s.Touch1Active, s.Touch1Tracking = decodeTouchStatus(data[15])
 	s.Touch2X = binary.LittleEndian.Uint16(data[16:18])
 	s.Touch2Y = binary.LittleEndian.Uint16(data[18:20])
-	s.Touch2Active = data[20] != 0
+	s.Touch2Active, s.Touch2Tracking = decodeTouchStatus(data[20])
 	s.GyroX = int16(binary.LittleEndian.Uint16(data[21:23]))
 	s.GyroY = int16(binary.LittleEndian.Uint16(data[23:25]))
 	s.GyroZ = int16(binary.LittleEndian.Uint16(data[25:27]))
 	s.AccelX = int16(binary.LittleEndian.Uint16(data[27:29]))
 	s.AccelY = int16(binary.LittleEndian.Uint16(data[29:31]))
 	s.AccelZ = int16(binary.LittleEndian.Uint16(data[31:33]))
+	s.PhysicalMetadataValid = false
+	s.PhysicalMetadataEdgeLayout = false
+	s.PhysicalSensorTimestamp = 0
+	clear(s.PhysicalInputMetadata[:])
+	if len(data) == InputStateRawSize {
+		flags := data[InputStateRawFlagsOffset]
+		if flags&^inputStateRawKnownFlags != 0 {
+			return fmt.Errorf("invalid DualSense input state flags 0x%02X", flags)
+		}
+		if flags&InputStatePhysicalMetadataEdgeLayout != 0 &&
+			flags&InputStatePhysicalMetadataValid == 0 {
+			return fmt.Errorf("invalid DualSense input state flags 0x%02X: Edge layout without valid metadata",
+				flags)
+		}
+		if flags&InputStatePhysicalMetadataValid != 0 {
+			s.PhysicalMetadataValid = true
+			s.PhysicalMetadataEdgeLayout =
+				flags&InputStatePhysicalMetadataEdgeLayout != 0
+			s.PhysicalSensorTimestamp = binary.LittleEndian.Uint32(
+				data[InputStatePhysicalSensorOffset:InputStatePhysicalMetadataOffset])
+			copy(s.PhysicalInputMetadata[:],
+				data[InputStatePhysicalMetadataOffset:InputStateRawSize])
+		}
+	}
 	return nil
 }
 
 // nolint
-// viiper:wire dualsense s2c rumbleSmall:u8 rumbleLarge:u8 ledRed:u8 ledGreen:u8 ledBlue:u8 playerLeds:u8
+// viiper:wire dualsense s2c rumbleSmall:u8 rumbleLarge:u8 ledRed:u8 ledGreen:u8 ledBlue:u8 playerLeds:u8 triggerR2Mode:u8 triggerR2StartResistance:u8 triggerR2EffectForce:u8 triggerR2RangeForce:u8 triggerR2NearReleaseStrength:u8 triggerR2NearMiddleStrength:u8 triggerR2PressedStrength:u8 triggerR2Reserved:u8*2 triggerR2Frequency:u8 triggerR2Padding:u8 triggerL2Mode:u8 triggerL2StartResistance:u8 triggerL2EffectForce:u8 triggerL2RangeForce:u8 triggerL2NearReleaseStrength:u8 triggerL2NearMiddleStrength:u8 triggerL2PressedStrength:u8 triggerL2Reserved:u8*2 triggerL2Frequency:u8 triggerL2Padding:u8 rawOutputReport:u8*48
 type OutputState struct {
 	RumbleSmall uint8
 	RumbleLarge uint8
@@ -101,22 +183,77 @@ type OutputState struct {
 	LedGreen    uint8
 	LedBlue     uint8
 	PlayerLeds  uint8
+
+	TriggerR2Mode                uint8
+	TriggerR2StartResistance     uint8
+	TriggerR2EffectForce         uint8
+	TriggerR2RangeForce          uint8
+	TriggerR2NearReleaseStrength uint8
+	TriggerR2NearMiddleStrength  uint8
+	TriggerR2PressedStrength     uint8
+	TriggerR2Frequency           uint8
+	TriggerL2Mode                uint8
+	TriggerL2StartResistance     uint8
+	TriggerL2EffectForce         uint8
+	TriggerL2RangeForce          uint8
+	TriggerL2NearReleaseStrength uint8
+	TriggerL2NearMiddleStrength  uint8
+	TriggerL2PressedStrength     uint8
+	TriggerL2Frequency           uint8
+
+	RawOutputReport               [OutputReportSize]byte
+	BluetoothCombinedOutputReport [BluetoothCombinedHapticsReportSize]byte
 }
 
-func (f *OutputState) MarshalBinary() ([]byte, error) {
-	return []byte{
-		f.RumbleSmall,
-		f.RumbleLarge,
-		f.LedRed,
-		f.LedGreen,
-		f.LedBlue,
-		f.PlayerLeds,
-	}, nil
+// MarshalV5Into emits the single V5 transport feedback contract:
+// compact state, native USB output report, and combined Bluetooth carrier.
+func (f *OutputState) MarshalV5Into(destination []byte) error {
+	if len(destination) < OutputStateV5Size {
+		return io.ErrShortBuffer
+	}
+	b := destination[:OutputStateV5Size]
+	clear(b)
+	b[0] = f.RumbleSmall
+	b[1] = f.RumbleLarge
+	b[2] = f.LedRed
+	b[3] = f.LedGreen
+	b[4] = f.LedBlue
+	b[5] = f.PlayerLeds
+
+	b[6] = f.TriggerR2Mode
+	b[7] = f.TriggerR2StartResistance
+	b[8] = f.TriggerR2EffectForce
+	b[9] = f.TriggerR2RangeForce
+	b[10] = f.TriggerR2NearReleaseStrength
+	b[11] = f.TriggerR2NearMiddleStrength
+	b[12] = f.TriggerR2PressedStrength
+	b[15] = f.TriggerR2Frequency
+
+	b[17] = f.TriggerL2Mode
+	b[18] = f.TriggerL2StartResistance
+	b[19] = f.TriggerL2EffectForce
+	b[20] = f.TriggerL2RangeForce
+	b[21] = f.TriggerL2NearReleaseStrength
+	b[22] = f.TriggerL2NearMiddleStrength
+	b[23] = f.TriggerL2PressedStrength
+	b[26] = f.TriggerL2Frequency
+	copy(b[OutputStateRawReportOffset:], f.RawOutputReport[:])
+	copy(b[OutputStateCombinedBluetoothOffset:], f.BluetoothCombinedOutputReport[:])
+	return nil
 }
 
-func (f *OutputState) UnmarshalBinary(data []byte) error {
-	if len(data) < OutputStateSize {
-		return io.ErrUnexpectedEOF
+// MarshalV5Binary is retained for compatibility with non-hot callers. Loaded
+// output paths should use MarshalV5Into with writer-owned storage.
+func (f *OutputState) MarshalV5Binary() ([]byte, error) {
+	b := make([]byte, OutputStateV5Size)
+	return b, f.MarshalV5Into(b)
+}
+
+// UnmarshalV5Binary accepts only the production V5 feedback payload.
+// Legacy compact and partially extended payloads are deliberately rejected.
+func (f *OutputState) UnmarshalV5Binary(data []byte) error {
+	if len(data) != OutputStateV5Size {
+		return fmt.Errorf("invalid DualSense V5 feedback length %d, expected %d", len(data), OutputStateV5Size)
 	}
 	f.RumbleSmall = data[0]
 	f.RumbleLarge = data[1]
@@ -124,7 +261,48 @@ func (f *OutputState) UnmarshalBinary(data []byte) error {
 	f.LedGreen = data[3]
 	f.LedBlue = data[4]
 	f.PlayerLeds = data[5]
+	f.TriggerR2Mode = data[6]
+	f.TriggerR2StartResistance = data[7]
+	f.TriggerR2EffectForce = data[8]
+	f.TriggerR2RangeForce = data[9]
+	f.TriggerR2NearReleaseStrength = data[10]
+	f.TriggerR2NearMiddleStrength = data[11]
+	f.TriggerR2PressedStrength = data[12]
+	f.TriggerR2Frequency = data[15]
+	f.TriggerL2Mode = data[17]
+	f.TriggerL2StartResistance = data[18]
+	f.TriggerL2EffectForce = data[19]
+	f.TriggerL2RangeForce = data[20]
+	f.TriggerL2NearReleaseStrength = data[21]
+	f.TriggerL2NearMiddleStrength = data[22]
+	f.TriggerL2PressedStrength = data[23]
+	f.TriggerL2Frequency = data[26]
+	copy(f.RawOutputReport[:], data[OutputStateRawReportOffset:OutputStateCombinedBluetoothOffset])
+	copy(f.BluetoothCombinedOutputReport[:], data[OutputStateCombinedBluetoothOffset:OutputStateV5Size])
 	return nil
+}
+
+// UnmarshalBinary implements encoding.BinaryUnmarshaler using the strict V5
+// contract. It intentionally provides no compact or partial compatibility.
+func (f *OutputState) UnmarshalBinary(data []byte) error {
+	return f.UnmarshalV5Binary(data)
+}
+
+func encodeTouchStatus(active bool, tracking uint8) uint8 {
+	if tracking != 0 {
+		if active {
+			return tracking &^ 0x80
+		}
+		return tracking | 0x80
+	}
+	if active {
+		return 0
+	}
+	return TouchInactiveMask
+}
+
+func decodeTouchStatus(status uint8) (bool, uint8) {
+	return status&0x80 == 0, status
 }
 
 type MetaState struct {

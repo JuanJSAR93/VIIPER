@@ -9,6 +9,29 @@ const (
 )
 
 const (
+	DeviceTypeCombinedAudioDuplexV5     = "dualsensecombinedaudioduplexv5"
+	DeviceTypeAudioOnlyDuplexV5         = "dualsenseaudioonlyduplexv5"
+	DeviceTypeGamepadOnlyV5             = "dualsensegamepadv5"
+	DeviceTypeEdgeCombinedAudioDuplexV5 = "dualsenseedgecombinedaudioduplexv5"
+	DeviceTypeEdgeGamepadOnlyV5         = "dualsenseedgegamepadv5"
+
+	// The events aliases are an explicit output-event capability boundary. They
+	// retain the exact legacy 33-byte input payload for existing clients.
+	DeviceTypeCombinedAudioDuplexV5Events     = "dualsensecombinedaudioduplexv5events"
+	DeviceTypeAudioOnlyDuplexV5Events         = "dualsenseaudioonlyduplexv5events"
+	DeviceTypeEdgeCombinedAudioDuplexV5Events = "dualsenseedgecombinedaudioduplexv5events"
+
+	// Raw-input aliases explicitly negotiate the enhanced 53-byte input state.
+	// Audio-capable variants also retain ordered output lifecycle events;
+	// gamepad-only variants have no microphone interface to advertise.
+	DeviceTypeCombinedAudioDuplexV5RawInputEvents     = "dualsensecombinedaudioduplexv5rawinputevents"
+	DeviceTypeAudioOnlyDuplexV5RawInputEvents         = "dualsenseaudioonlyduplexv5rawinputevents"
+	DeviceTypeGamepadOnlyV5RawInput                   = "dualsensegamepadv5rawinput"
+	DeviceTypeEdgeCombinedAudioDuplexV5RawInputEvents = "dualsenseedgecombinedaudioduplexv5rawinputevents"
+	DeviceTypeEdgeGamepadOnlyV5RawInput               = "dualsenseedgegamepadv5rawinput"
+)
+
+const (
 	DefaultMACAddressDSEdge   = "A5:FE:9C:CF:92:00" // Steam reads this as serial? // TODO: not detected by all apps
 	DefaultSerialNumberDSEdge = "E55E00GTD1190A500" // Byte 6 (00) is "color code" will be replaced by MetaState
 	DefaultBoardStringEdge    = "HMB-010"
@@ -29,8 +52,16 @@ const (
 var DefaultBuildTime = time.Date(2025, time.July, 4, 10, 10, 32, 0, time.UTC)
 
 const (
-	EndpointIn  = 0x84
-	EndpointOut = 0x03
+	EndpointIn              = 0x84
+	EndpointOut             = 0x03
+	EndpointHapticsAudioOut = 0x01
+	EndpointMicrophoneIn    = 0x82
+)
+
+const (
+	InterfaceAudioControl = 0x00
+	InterfaceHapticsAudio = 0x01
+	InterfaceMicrophone   = 0x02
 )
 
 const (
@@ -40,9 +71,64 @@ const (
 
 const (
 	InputReportSize  = 64
-	OutputReportSize = 64
+	OutputReportSize = 48
 	InputStateSize   = 33
-	OutputStateSize  = 6
+	// InputStateRawSize is negotiated only by the exact ...v5rawinput... device
+	// aliases. It retains the legacy state at bytes 0:33, adds one flags byte,
+	// then transports normalized physical DualSense report metadata without
+	// changing the legacy V5 contract.
+	InputStateRawSize                          = 53
+	InputStateRawFlagsOffset                   = InputStateSize
+	InputStatePhysicalSensorOffset             = InputStateRawFlagsOffset + 1
+	InputStatePhysicalMetadataOffset           = InputStatePhysicalSensorOffset + 4
+	InputStatePhysicalMetadataSize             = 15
+	InputStatePhysicalMetadataValid      uint8 = 1 << 0
+	InputStatePhysicalMetadataEdgeLayout uint8 = 1 << 1
+	inputStateRawKnownFlags                    = InputStatePhysicalMetadataValid |
+		InputStatePhysicalMetadataEdgeLayout
+	StreamFrameHeaderSize    = 16
+	StreamFrameMagic0        = 0x56
+	StreamFrameMagic1        = 0x50
+	StreamFrameMagic2        = 0x43
+	StreamFrameMagic3        = 0x4D
+	StreamFrameVersionV5     = 0x05
+	StreamFrameInputState    = 0x01
+	StreamFrameMicrophonePCM = 0x02
+	StreamFrameOutputState   = 0x81
+	// V5 follows the proven V5 contract. It retains atomic delivery, but
+	// separates the endpoint's two clocks. Its
+	// speaker tail is exactly 480 raw front-stereo S16LE frames (10 ms at the
+	// native 48 kHz source clock). Rear channels independently produce one
+	// 64-byte 3 kHz haptics interval for every 512 source frames. Each V5 media
+	// frame consumes one completed rear interval or zero-fills that lane, while
+	// state and report counters remain on the 480-frame presentation clock.
+	StreamFrameAtomicAudioHaptics = 0x83
+	// Completed rear-channel haptics are published immediately instead of
+	// waiting for the next independent 480-frame speaker boundary. The paired
+	// 0x83 media frame remains unchanged for compatibility, while V5 consumers
+	// that understand this lane can remove up to one speaker interval of host
+	// latency.
+	StreamFrameRealtimeHaptics = 0x84
+	// StreamFrameMicrophoneInterfaceState is an ordered lifecycle event. Its
+	// payload is one active byte followed by the little-endian uint64 stream
+	// generation established when this V5 connection attached.
+	StreamFrameMicrophoneInterfaceState = 0x85
+	USBMicrophoneSampleRate             = 48000
+	USBMicrophoneChannels               = 2
+	USBMicrophoneBytesPerSample         = 2
+	USBMicrophonePacketFrames           = USBMicrophoneSampleRate / 1000
+	USBMicrophonePacketSize             = USBMicrophonePacketFrames *
+		USBMicrophoneChannels * USBMicrophoneBytesPerSample
+	USBMicrophoneMaxPacketSize = USBMicrophonePacketSize +
+		USBMicrophoneChannels*USBMicrophoneBytesPerSample
+	USBMicrophoneClientFrameFrames = 480
+	USBMicrophoneClientFrameSize   = USBMicrophoneClientFrameFrames *
+		USBMicrophoneChannels * USBMicrophoneBytesPerSample
+
+	OutputStateTriggerBlocksSize       = 28
+	OutputStateRawReportOffset         = OutputStateTriggerBlocksSize
+	OutputStateCombinedBluetoothOffset = OutputStateRawReportOffset + OutputReportSize
+	OutputStateV5Size                  = OutputStateCombinedBluetoothOffset + BluetoothCombinedHapticsReportSize
 )
 
 const (
@@ -70,12 +156,34 @@ const (
 	ButtonEdgeR4  uint32 = 0x00800000
 )
 
+const validDualSenseInputButtons uint32 = ButtonSquare |
+	ButtonCross |
+	ButtonCircle |
+	ButtonTriangle |
+	ButtonL1 |
+	ButtonR1 |
+	ButtonL2 |
+	ButtonR2 |
+	ButtonCreate |
+	ButtonOptions |
+	ButtonL3 |
+	ButtonR3 |
+	ButtonPS |
+	ButtonTouchpad |
+	ButtonMicMute |
+	ButtonEdgeLFn |
+	ButtonEdgeRFn |
+	ButtonEdgeL4 |
+	ButtonEdgeR4
+
 const (
 	DPadUp    = 0x01
 	DPadDown  = 0x02
 	DPadLeft  = 0x04
 	DPadRight = 0x08
 )
+
+const validDualSenseInputDPad uint8 = DPadUp | DPadDown | DPadLeft | DPadRight
 
 const (
 	DPadUSBUp        = 0x00

@@ -18,8 +18,49 @@ const (
 var DefaultBuildTime = time.Date(2021, time.September, 17, 11, 34, 0, 0, time.UTC)
 
 const (
-	EndpointIn  = 0x84
-	EndpointOut = 0x03
+	EndpointAudioOut     = 0x01
+	EndpointMicrophoneIn = 0x82
+	EndpointIn           = 0x84
+	EndpointOut          = 0x03
+)
+
+const (
+	InterfaceAudioControl = 0x00
+	InterfaceSpeaker      = 0x01
+	InterfaceMicrophone   = 0x02
+	InterfaceHID          = 0x03
+)
+
+const (
+	USBSpeakerSampleRate     = 32000
+	USBSpeakerChannels       = 2
+	USBSpeakerBytesPerSample = 2
+	USBSpeakerMaxPacketSize  = 132
+
+	USBMicrophoneSampleRate     = 16000
+	USBMicrophoneChannels       = 1
+	USBMicrophoneBytesPerSample = 2
+	USBMicrophonePacketFrames   = USBMicrophoneSampleRate / 1000
+	USBMicrophonePacketSize     = USBMicrophonePacketFrames *
+		USBMicrophoneChannels * USBMicrophoneBytesPerSample
+	USBMicrophoneMaxPacketSize   = 34
+	USBMicrophoneClientFrames    = USBMicrophoneSampleRate / 100
+	USBMicrophoneClientFrameSize = USBMicrophoneClientFrames *
+		USBMicrophoneChannels * USBMicrophoneBytesPerSample
+)
+
+const (
+	InputStateSize           = 31
+	StreamFrameHeaderSize    = 16
+	StreamFrameMagic0        = 0x56
+	StreamFrameMagic1        = 0x50
+	StreamFrameMagic2        = 0x43
+	StreamFrameMagic3        = 0x4D
+	StreamFrameVersionV3     = 0x03
+	StreamFrameInputState    = 0x01
+	StreamFrameMicrophonePCM = 0x02
+	StreamFrameOutputState   = 0x81
+	StreamFrameSpeakerPCM    = 0x82
 )
 
 const (

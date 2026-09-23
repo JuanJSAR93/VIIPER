@@ -12,24 +12,41 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/Alia5/VIIPER/device"
+	"github.com/Alia5/VIIPER/device/xboxone"
 	"github.com/Alia5/VIIPER/internal/server/api/auth"
 	apierror "github.com/Alia5/VIIPER/internal/server/api/error"
 	"github.com/Alia5/VIIPER/internal/server/usb"
 	pusb "github.com/Alia5/VIIPER/usb"
 	"github.com/Alia5/VIIPER/viipertypes"
+	"github.com/Alia5/VIIPER/virtualbus"
 )
 
 // Server implements a small TCP API for managing virtual bus topology.
 type Server struct {
-	usbs   *usb.Server
-	addr   string
-	ln     net.Listener
-	logger *slog.Logger
-	router *Router
-	config *ServerConfig
+	usbs          *usb.Server
+	addr          string
+	ln            net.Listener
+	logger        *slog.Logger
+	router        *Router
+	config        *ServerConfig
+	deviceStreams deviceStreamCoordinator
+	xboxRetries   *xboxOneRetryCleanup
 }
+
+// microphonePCMResetter is implemented by audio-capable virtual controllers.
+// Its reset is coordinated with stream ownership instead of individual device
+// handlers so a same-device replacement can retain already-buffered capture.
+type microphonePCMResetter interface {
+	ResetMicrophonePCM()
+}
+
+// deviceStreamReconnectGrace covers the natural client lifecycle in which the
+// old stream is closed immediately before its same-device replacement opens.
+// Keeping this separate from the longer removal timeout preserves live capture
+// audio without retaining stale transport state for the full device lifetime.
+const deviceStreamReconnectGrace = 250 * time.Millisecond
 
 // New creates a new ApiServer bound to a server.Server instance.
 func New(s *usb.Server, addr string, config ServerConfig, logger *slog.Logger) *Server {
@@ -41,6 +58,8 @@ func New(s *usb.Server, addr string, config ServerConfig, logger *slog.Logger) *
 		config: &cfg,
 	}
 	a.router = NewRouter()
+	a.xboxRetries = newXboxOneRetryCleanup(logger)
+	s.SetFailedImportObserver(a.xboxRetries.observe)
 	return a
 }
 
@@ -52,6 +71,31 @@ func (s *Server) USB() *usb.Server { return s.usbs }
 
 // Config returns the server configuration.
 func (s *Server) Config() *ServerConfig { return s.config }
+
+// ScheduleDeviceCleanup arms the initial no-stream cleanup through the same
+// generation owner used for reconnects. A stream that claims the device before
+// the timeout atomically cancels this cleanup.
+func (s *Server) ScheduleDeviceCleanup(
+	registration virtualbus.DeviceMeta,
+) {
+	busID := registration.Meta.BusID
+	devID := fmt.Sprintf("%d", registration.Meta.DevID)
+	key := deviceStreamKey{
+		busID: busID, devID: devID, bus: registration.Bus,
+		registrationToken: registration.RegistrationToken,
+	}
+	s.deviceStreams.scheduleCleanup(key,
+		s.config.DeviceHandlerConnectTimeout, registration.Context, func() {
+			removed, err := s.usbs.RemoveDeviceRegistrationIfPresent(registration)
+			if err != nil {
+				s.logger.Error("timeout: failed to remove device",
+					"busID", busID, "deviceID", devID, "error", err)
+			} else if removed {
+				s.logger.Info("timeout: removed device (no connection)",
+					"busID", busID, "deviceID", devID)
+			}
+		})
+}
 
 // Addr returns the actual address the server is listening on.
 // If Start hasn't been called yet, it returns the configured address.
@@ -140,7 +184,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	isAuth, err := auth.IsAuthHandshake(r)
 	if err != nil {
 		connLogger.Error("api handshake check", "error", err)
-		// continue as unauthenticated
+		if errors.Is(err, auth.ErrUnsupportedAuthVersion) {
+			s.writeError(w, apierror.ErrUnauthorized(auth.ErrUnsupportedAuthVersion.Error()))
+		}
+		return // A failed encrypted negotiation is never plaintext permission.
 	}
 
 	if !isAuth && s.requiresAuth(conn.RemoteAddr()) {
@@ -169,7 +216,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 
 		sessionKey := auth.DeriveSessionKey(key, serverNonce, clientNonce)
-		secConn, err := auth.WrapConn(conn, sessionKey)
+		secConn, err := auth.WrapConn(conn, sessionKey, auth.Server)
 		if err != nil {
 			connLogger.Error("wrap secure conn failed", "error", err)
 			return
@@ -225,7 +272,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	connLogger.Info("api cmd", "path", path)
 
 	if h, params := s.router.Match(path); h != nil {
-		req := &Request{Ctx: connCtx, Params: params, Payload: payload}
+		req := &Request{
+			Ctx: connCtx, Params: params, Payload: payload,
+			Authenticated: isAuth,
+		}
 		res := &Response{}
 		if err := h(req, res, connLogger); err != nil {
 			connLogger.Error("api handler error", "path", path, "error", err)
@@ -237,6 +287,27 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	} else if sh, params := s.router.MatchStream(path); sh != nil {
 		connLogger.Info("api stream begin", "path", path)
+		// ReadString can legally buffer bytes sent immediately after the stream
+		// path. Keep that reader in front of the connection for the device
+		// handler; otherwise the first input/microphone frame of a reconnect can
+		// disappear in the handshake reader and stall framing indefinitely.
+		buffered := &bufferedReadConn{Conn: conn, reader: r}
+		var streamConn net.Conn = buffered
+		protectedXbox := strings.HasSuffix(path, "/stream-authorized-xboxone")
+		var xboxAdmission *XboxOneRegistrationAdmission
+		if protectedXbox {
+			if !isAuth {
+				s.writeError(w, apierror.ErrUnauthorized("authenticated Xbox One stream required"))
+				return
+			}
+			var err error
+			xboxAdmission, err = SelectAuthorizedXboxOneRegistration(s.usbs, params["busId"], params["deviceid"], payload)
+			if err != nil {
+				s.writeError(w, err)
+				return
+			}
+			streamConn = &xboxOneRegistrationConn{bufferedReadConn: buffered, admission: xboxAdmission}
+		}
 		busIDStr, ok := params["busId"]
 		if !ok {
 			s.writeError(w, apierror.ErrBadRequest("missing busId parameter"))
@@ -259,59 +330,111 @@ func (s *Server) handleConn(conn net.Conn) {
 			return
 		}
 		var dev pusb.Device
-		var devCtx context.Context
-		metas := bus.GetAllDeviceMetas()
-		for _, meta := range metas {
-			if fmt.Sprintf("%d", meta.Meta.DevID) == devIDStr {
-				dev = meta.Dev
-				devCtx = bus.GetDeviceContext(dev)
-				break
+		var registration virtualbus.DeviceMeta
+		if xboxAdmission != nil {
+			registration = xboxAdmission.Registration()
+			dev = registration.Dev
+		} else {
+			metas := bus.GetAllDeviceMetas()
+			for _, meta := range metas {
+				if fmt.Sprintf("%d", meta.Meta.DevID) == devIDStr {
+					dev = meta.Dev
+					registration = meta
+					break
+				}
+			}
+			if _, protected := dev.(*xboxone.AuthorizedDormantRetainedUSBDevice); protected {
+				s.writeError(w, apierror.ErrUnauthorized("Xbox One stream requires its exact registration capability"))
+				return
 			}
 		}
+		devCtx := registration.Context
 		if dev == nil || devCtx == nil {
 			s.writeError(w, apierror.ErrNotFound(fmt.Sprintf("device %s not found on bus %d", devIDStr, busID)))
 			return
 		}
 
-		connTimer := device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Stop()
+		streamKey := deviceStreamKey{
+			busID: uint32(busID), devID: devIDStr, bus: registration.Bus,
+			registrationToken: registration.RegistrationToken,
+		}
+		var lease *deviceStreamLease
+		if xboxAdmission != nil {
+			var err error
+			lease, err = xboxAdmission.claimStream(func() *deviceStreamLease {
+				return s.deviceStreams.claimExclusive(streamKey, streamConn)
+			})
+			if err != nil {
+				s.writeError(w, err)
+				return
+			}
+		} else {
+			lease = s.deviceStreams.claim(streamKey, streamConn)
+		}
+		handlerStarted := false
+		defer func() {
+			if !handlerStarted {
+				lease.abandon()
+				return
+			}
+			lease.finish(deviceStreamReconnectGrace,
+				s.config.DeviceHandlerConnectTimeout, devCtx, func() {
+					if resetter, ok := dev.(microphonePCMResetter); ok {
+						resetter.ResetMicrophonePCM()
+					}
+				}, func() {
+					removed, err := s.usbs.RemoveDeviceRegistrationIfPresent(
+						registration)
+					if err != nil {
+						connLogger.Error("disconnect timeout: failed to remove device",
+							"busID", busID, "deviceID", devIDStr, "error", err)
+					} else if removed {
+						connLogger.Info("disconnect timeout: removed device (no reconnection)",
+							"busID", busID, "deviceID", devIDStr)
+					}
+				})
+		}()
+
+		if !lease.waitForTurn(devCtx) {
+			return
+		}
+		select {
+		case <-devCtx.Done():
+			return
+		default:
 		}
 
 		// Stream handler takes ownership of connection
-		if err := sh(conn, &dev, connLogger); err != nil {
+		if xboxAdmission != nil {
+			stopClosing := context.AfterFunc(devCtx, func() { _ = streamConn.Close() })
+			defer stopClosing()
+		}
+		handlerStarted = true
+		if err := sh(streamConn, &dev, connLogger); err != nil {
 			connLogger.Error("api stream handler error", "path", path, "error", err)
 		}
 		connLogger.Info("api stream end", "path", path)
-
-		connTimer = device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Reset(s.config.DeviceHandlerConnectTimeout)
-			go func() {
-				select {
-				case <-devCtx.Done():
-					connTimer.Stop()
-					return
-				case <-connTimer.C:
-					exportMeta := device.GetDeviceMeta(devCtx)
-					if exportMeta != nil {
-						deviceIDStr := fmt.Sprintf("%d", exportMeta.DevID)
-						if err := bus.RemoveDeviceByID(deviceIDStr); err != nil {
-							connLogger.Error("disconnect timeout: failed to remove device", "busID", busID, "deviceID", deviceIDStr, "error", err)
-						} else {
-							connLogger.Info("disconnect timeout: removed device (no reconnection)", "busID", busID, "deviceID", deviceIDStr)
-						}
-						return
-					}
-					connLogger.Warn("disconnect timeout: device context closed but metadata missing")
-				}
-			}()
-		}
 
 		return
 	}
 	connLogger.Error("api unknown path", "path", path)
 	s.writeError(w, apierror.ErrNotFound(fmt.Sprintf("unknown path: %s", path)))
+}
+
+type bufferedReadConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedReadConn) Read(buffer []byte) (int, error) {
+	return c.reader.Read(buffer)
+}
+
+// VIIPERAuthenticated preserves the handshake fact through the buffered
+// connection wrapper handed to a device-specific stream owner.
+func (c *bufferedReadConn) VIIPERAuthenticated() bool {
+	marker, ok := c.Conn.(interface{ VIIPERAuthenticated() bool })
+	return ok && marker.VIIPERAuthenticated()
 }
 
 func (s *Server) isLocalHostClient(addr net.Addr) bool {

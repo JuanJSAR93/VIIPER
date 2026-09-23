@@ -19,19 +19,61 @@ var defaultDescriptor = usb.Descriptor{
 		IProduct:           0x02,
 		ISerialNumber:      0x00,
 		BNumConfigurations: 0x01,
-		Speed:              2, // Full speed
+		Speed:              3, // High speed; required for the 48 kHz UAC stream.
+	},
+	// Match the physical wired DualSense configuration header. The values below
+	// are part of the device identity exposed to host software, including titles
+	// that choose a controller-specific UAC route from the USB descriptor.
+	Configuration: usb.ConfigurationDescriptor{
+		BConfigurationValue: 0x01,
+		BMAttributes:        0xC0,
+		BMaxPower:           0xFA,
 	},
 	Interfaces: []usb.InterfaceConfig{
 		{
 			Descriptor: usb.InterfaceDescriptor{
 				BInterfaceNumber:   0x00,
 				BAlternateSetting:  0x00,
-				BNumEndpoints:      0x02,
-				BInterfaceClass:    0x03, // HID
-				BInterfaceSubClass: 0x00,
+				BNumEndpoints:      0x00,
+				BInterfaceClass:    0x01, // Audio
+				BInterfaceSubClass: 0x01, // AudioControl
 				BInterfaceProtocol: 0x00,
 				IInterface:         0x00,
 			},
+			ClassDescriptors: []usb.ClassSpecificDescriptor{
+				{DescriptorType: 0x24, Payload: usb.Data{0x01, 0x00, 0x01, 0x49, 0x00, 0x02, 0x01, 0x02}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x02, 0x01, 0x01, 0x01, 0x06, 0x04, 0x33, 0x00, 0x00, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x06, 0x02, 0x01, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x03, 0x03, 0x01, 0x03, 0x04, 0x02, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x02, 0x04, 0x02, 0x04, 0x03, 0x02, 0x03, 0x00, 0x00, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x06, 0x05, 0x04, 0x01, 0x03, 0x00, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x03, 0x06, 0x01, 0x01, 0x01, 0x05, 0x00}},
+			},
+		},
+		{
+			Descriptor: usb.InterfaceDescriptor{BInterfaceNumber: 0x01, BAlternateSetting: 0x00, BNumEndpoints: 0x00, BInterfaceClass: 0x01, BInterfaceSubClass: 0x02},
+		},
+		{
+			Descriptor: usb.InterfaceDescriptor{BInterfaceNumber: 0x01, BAlternateSetting: 0x01, BNumEndpoints: 0x01, BInterfaceClass: 0x01, BInterfaceSubClass: 0x02},
+			ClassDescriptors: []usb.ClassSpecificDescriptor{
+				{DescriptorType: 0x24, Payload: usb.Data{0x01, 0x01, 0x01, 0x01, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x02, 0x01, USBHapticsAudioChannels, USBHapticsAudioBytesPerSample, 0x10, 0x01, 0x80, 0xBB, 0x00}},
+			},
+			Endpoints: []usb.EndpointDescriptor{{BEndpointAddress: EndpointHapticsAudioOut, BMAttributes: 0x09, WMaxPacketSize: USBHapticsAudioMaxPacketSize, BInterval: 4, Trailing: usb.Data{0x00, 0x00}, ClassDescriptors: []usb.ClassSpecificDescriptor{{DescriptorType: 0x25, Payload: usb.Data{0x01, 0x00, 0x00, 0x00, 0x00}}}}},
+		},
+		{
+			Descriptor: usb.InterfaceDescriptor{BInterfaceNumber: 0x02, BAlternateSetting: 0x00, BNumEndpoints: 0x00, BInterfaceClass: 0x01, BInterfaceSubClass: 0x02},
+		},
+		{
+			Descriptor: usb.InterfaceDescriptor{BInterfaceNumber: 0x02, BAlternateSetting: 0x01, BNumEndpoints: 0x01, BInterfaceClass: 0x01, BInterfaceSubClass: 0x02},
+			ClassDescriptors: []usb.ClassSpecificDescriptor{
+				{DescriptorType: 0x24, Payload: usb.Data{0x01, 0x06, 0x01, 0x01, 0x00}},
+				{DescriptorType: 0x24, Payload: usb.Data{0x02, 0x01, 0x02, 0x02, 0x10, 0x01, 0x80, 0xBB, 0x00}},
+			},
+			Endpoints: []usb.EndpointDescriptor{{BEndpointAddress: EndpointMicrophoneIn, BMAttributes: 0x05, WMaxPacketSize: USBMicrophoneMaxPacketSize, BInterval: 4, Trailing: usb.Data{0x00, 0x00}, ClassDescriptors: []usb.ClassSpecificDescriptor{{DescriptorType: 0x25, Payload: usb.Data{0x01, 0x00, 0x00, 0x00, 0x00}}}}},
+		},
+		{
+			Descriptor: usb.InterfaceDescriptor{BInterfaceNumber: 0x03, BAlternateSetting: 0x00, BNumEndpoints: 0x02, BInterfaceClass: 0x03, BInterfaceSubClass: 0x00, BInterfaceProtocol: 0x00},
 			HID: &usb.HIDFunction{
 				Descriptor: usb.HIDDescriptor{
 					BcdHID:       0x0111,
@@ -47,7 +89,6 @@ var defaultDescriptor = usb.Descriptor{
 						Kind: hid.CollectionApplication,
 						Items: []hid.Item{
 							hid.ReportID{ID: ReportIDInput},
-							hid.UsagePage{Page: hid.UsagePageGenericDesktop},
 							hid.Usage{Usage: hid.UsageX},
 							hid.Usage{Usage: hid.UsageY},
 							hid.Usage{Usage: hid.UsageZ},
@@ -101,7 +142,7 @@ var defaultDescriptor = usb.Descriptor{
 
 							hid.ReportID{ID: ReportIDOutput},
 							hid.Usage{Usage: 0x23},
-							hid.ReportCount{Count: 63},
+							hid.ReportCount{Count: OutputReportSize - 1},
 							hid.Output{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 
 							hid.ReportID{ID: featureIDCalibration}, hid.Usage{Usage: 0x33}, hid.ReportCount{Count: 40}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
@@ -121,7 +162,7 @@ var defaultDescriptor = usb.Descriptor{
 							hid.ReportID{ID: 0xE0}, hid.Usage{Usage: 0x2F}, hid.ReportCount{Count: 63}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 							hid.ReportID{ID: 0xF0}, hid.Usage{Usage: 0x30}, hid.ReportCount{Count: 63}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 							hid.ReportID{ID: 0xF1}, hid.Usage{Usage: 0x31}, hid.ReportCount{Count: 63}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
-							hid.ReportID{ID: 0xF2}, hid.Usage{Usage: 0x32}, hid.ReportCount{Count: 52}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
+							hid.ReportID{ID: 0xF2}, hid.Usage{Usage: 0x32}, hid.ReportCount{Count: 15}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 							hid.ReportID{ID: 0xF4}, hid.Usage{Usage: 0x35}, hid.ReportCount{Count: 63}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 							hid.ReportID{ID: 0xF5}, hid.Usage{Usage: 0x36}, hid.ReportCount{Count: 3}, hid.Feature{Flags: hid.MainData | hid.MainVar | hid.MainAbs},
 
@@ -152,20 +193,232 @@ var defaultDescriptor = usb.Descriptor{
 					BEndpointAddress: EndpointIn,
 					BMAttributes:     0x03, // Interrupt
 					WMaxPacketSize:   64,
-					BInterval:        2,
+					// High-speed interrupt bInterval=4 is one millisecond
+					// (2^(4-1) microframes). This is the maximum presentation
+					// cadence; fresh physical state remains producer-driven.
+					BInterval: 4,
 				},
 				{
 					BEndpointAddress: EndpointOut,
 					BMAttributes:     0x03, // Interrupt
 					WMaxPacketSize:   64,
-					BInterval:        2,
+					BInterval:        6,
 				},
 			},
 		},
+		/* Legacy partial UAC topology retained for comparison only. */
+		/*
+			{
+				Descriptor: usb.InterfaceDescriptor{
+						BInterfaceNumber:   0x01,
+						BAlternateSetting:  0x00,
+						BNumEndpoints:      0x00,
+						BInterfaceClass:    0x01, // Audio
+						BInterfaceSubClass: 0x01, // AudioControl
+						BInterfaceProtocol: 0x00,
+						IInterface:         0x00,
+					},
+					ClassDescriptors: []usb.ClassSpecificDescriptor{
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// UAC1 Header: subtype HEADER, ADC 1.00, total class
+							// descriptor length, one streaming interface (#2).
+							Payload: usb.Data{0x01, 0x00, 0x01, 0x2A, 0x00, 0x01, 0x02},
+						},
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// Input Terminal: USB streaming source, 4 channels
+							// advertised as quad (front L/R plus rear L/R).
+							Payload: usb.Data{0x02, 0x01, 0x01, 0x01, 0x00, USBHapticsAudioChannels, 0x33, 0x00, 0x00, 0x00},
+						},
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// Feature Unit: topology bridge from terminal 1 to output
+							// terminal 3. No mute/volume controls are exposed; DS games
+							// only need the render stream, and omitting this unit makes
+							// Windows usbaudio reject some otherwise valid topologies.
+							Payload: usb.Data{0x06, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+						},
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// Output Terminal: speaker/haptics sink, source unit 2.
+							Payload: usb.Data{0x03, 0x03, 0x01, 0x03, 0x00, 0x02, 0x00},
+						},
+					},
+				},
+				{
+					Descriptor: usb.InterfaceDescriptor{
+						BInterfaceNumber:   0x02,
+						BAlternateSetting:  0x00,
+						BNumEndpoints:      0x00,
+						BInterfaceClass:    0x01, // Audio
+						BInterfaceSubClass: 0x02, // AudioStreaming
+						BInterfaceProtocol: 0x00,
+						IInterface:         0x00,
+					},
+				},
+				{
+					Descriptor: usb.InterfaceDescriptor{
+						BInterfaceNumber:   0x02,
+						BAlternateSetting:  0x01,
+						BNumEndpoints:      0x01,
+						BInterfaceClass:    0x01, // Audio
+						BInterfaceSubClass: 0x02, // AudioStreaming
+						BInterfaceProtocol: 0x00,
+						IInterface:         0x00,
+					},
+					ClassDescriptors: []usb.ClassSpecificDescriptor{
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// AS General: terminal link 1, PCM.
+							Payload: usb.Data{0x01, 0x01, 0x01, 0x00, 0x01},
+						},
+						{
+							DescriptorType: 0x24, // CS_INTERFACE
+							// Format Type I: 4-channel, 16-bit PCM, one discrete
+							// sample rate = 48000 Hz. Games expect the wired
+							// DualSense haptics path to look like a standard
+							// 4-channel USB audio render endpoint; VIIPER downsamples
+							// channels 3/4 to the SAxense 3 kHz Bluetooth HID stream.
+							Payload: usb.Data{0x02, 0x01, USBHapticsAudioChannels, USBHapticsAudioBytesPerSample, 0x10, 0x01, 0x80, 0xBB, 0x00},
+						},
+					},
+					Endpoints: []usb.EndpointDescriptor{
+						{
+							BEndpointAddress: EndpointHapticsAudioOut,
+							BMAttributes:     0x09, // Isochronous, adaptive, data endpoint.
+							WMaxPacketSize:   USBHapticsAudioMaxPacketSize,
+							BInterval:        4,
+							// Captured wired DualSense descriptors include these two zero
+							// trailing bytes. Preserve their nine-byte endpoint layout.
+							Trailing: usb.Data{0x00, 0x00},
+							ClassDescriptors: []usb.ClassSpecificDescriptor{
+								{
+									DescriptorType: 0x25, // CS_ENDPOINT
+									// EP General: no sampling-frequency or pitch controls.
+									Payload: usb.Data{0x01, 0x00, 0x00, 0x00, 0x00},
+								},
+							},
+						},
+					},
+				},
+		*/
 	},
 	Strings: map[uint8]string{
 		0: "\u0409", // LangID: en-US (0x0409)
 		1: "Sony Interactive Entertainment",
+		// Preserve the product string exposed by a physical USB DualSense.
+		// Windows propagates this into the usbaudio device and its speaker
+		// endpoint, and some PlayStation titles use that identity when they
+		// choose a controller-specific audio route.
 		2: "DualSense Wireless Controller",
 	},
+}
+
+func makeDescriptor(edge bool) usb.Descriptor {
+	desc := defaultDescriptor
+	desc.Interfaces = append([]usb.InterfaceConfig(nil), defaultDescriptor.Interfaces...)
+	desc.Strings = make(map[uint8]string, len(defaultDescriptor.Strings))
+	for k, v := range defaultDescriptor.Strings {
+		desc.Strings[k] = v
+	}
+
+	for i := range desc.Interfaces {
+		if desc.Interfaces[i].HID == nil {
+			continue
+		}
+
+		hidFunction := *desc.Interfaces[i].HID
+		reportDescriptor := hidFunction.ReportDescriptor
+		reportDescriptor.Items = append([]hid.Item(nil), reportDescriptor.Items...)
+		for i, item := range reportDescriptor.Items {
+			collection, ok := item.(hid.Collection)
+			if !ok {
+				continue
+			}
+
+			collection.Items = append([]hid.Item(nil), collection.Items...)
+			if !edge {
+				collection.Items = withoutEdgeFeatureReports(collection.Items)
+			}
+
+			reportDescriptor.Items[i] = collection
+		}
+
+		hidFunction.ReportDescriptor = reportDescriptor
+		desc.Interfaces[i].HID = &hidFunction
+		break
+	}
+
+	desc.Device.IDProduct = DefaultPIDDS
+	if edge {
+		desc.Device.IDProduct = DefaultPIDDSEdge
+		desc.Strings[2] = "DualSense Edge Wireless Controller"
+	}
+
+	return desc
+}
+
+// makeAudioOnlyDescriptor retains the native PlayStation UAC interfaces while
+// omitting the HID gamepad interface. It is used as a sidecar for profiles
+// whose game-visible controller is Xbox or Switch, so Windows can expose the
+// speaker/microphone endpoints without enumerating a second game controller.
+func makeAudioOnlyDescriptor(edge bool) usb.Descriptor {
+	desc := makeDescriptor(edge)
+	interfaces := make([]usb.InterfaceConfig, 0, len(desc.Interfaces))
+	for _, iface := range desc.Interfaces {
+		if iface.HID == nil && iface.Descriptor.BInterfaceClass != 0x03 {
+			interfaces = append(interfaces, iface)
+		}
+	}
+	desc.Interfaces = interfaces
+	return desc
+}
+
+// makeGamepadOnlyDescriptor is the complement of the audio-only sidecar.
+// Keeping the HID controller and its UAC interfaces on separate USB devices
+// lets clients replace the game-visible controller without tearing down the
+// stable Windows playback and recording endpoints owned by the sidecar.
+func makeGamepadOnlyDescriptor(edge bool) usb.Descriptor {
+	desc := makeDescriptor(edge)
+	interfaces := make([]usb.InterfaceConfig, 0, 1)
+	for _, iface := range desc.Interfaces {
+		if iface.HID != nil || iface.Descriptor.BInterfaceClass == 0x03 {
+			interfaces = append(interfaces, iface)
+		}
+	}
+	desc.Interfaces = interfaces
+	return desc
+}
+
+func withoutEdgeFeatureReports(items []hid.Item) []hid.Item {
+	filtered := make([]hid.Item, 0, len(items))
+	for i := 0; i < len(items); i++ {
+		reportID, ok := items[i].(hid.ReportID)
+		if ok && isEdgeFeatureReport(reportID.ID) && i+3 < len(items) {
+			if _, ok := items[i+1].(hid.Usage); ok {
+				if _, ok := items[i+2].(hid.ReportCount); ok {
+					if _, ok := items[i+3].(hid.Feature); ok {
+						i += 3
+						continue
+					}
+				}
+			}
+		}
+
+		filtered = append(filtered, items[i])
+	}
+
+	return filtered
+}
+
+func isEdgeFeatureReport(reportID uint8) bool {
+	switch reportID {
+	case 0x60, 0x61, 0x62, 0x63, 0x64, 0x65,
+		0x68,
+		0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B:
+		return true
+	default:
+		return false
+	}
 }

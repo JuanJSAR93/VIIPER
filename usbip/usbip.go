@@ -188,7 +188,7 @@ type CmdSubmit struct {
 	TransferFlags     uint32
 	TransferBufferLen uint32
 	StartFrame        uint32
-	NumberOfPackets   uint32
+	NumberOfPackets   int32
 	Interval          uint32
 	Setup             [8]byte
 }
@@ -234,9 +234,59 @@ type RetSubmit struct {
 	Status          int32
 	ActualLength    uint32
 	StartFrame      uint32
-	NumberOfPackets uint32
+	NumberOfPackets int32
 	ErrorCount      uint32
 	Padding         [8]byte
+}
+
+// IsoPacketDescriptor is the 16-byte USB/IP representation of one packet in
+// an isochronous URB. USB/IP appends one descriptor per packet after the data
+// payload for both submit and return messages.
+type IsoPacketDescriptor struct {
+	Offset       uint32
+	Length       uint32
+	ActualLength uint32
+	Status       int32
+}
+
+// IsoPacketDescriptorSize is the fixed USB/IP wire size of one ISO packet
+// descriptor.
+const IsoPacketDescriptorSize = 16
+
+// Decode reads one fixed-layout descriptor from an already-owned wire buffer.
+// Hot USB/IP readers should read all descriptors into connection-owned scratch
+// first, then decode from that scratch so the io.Reader interface cannot make a
+// temporary descriptor buffer escape once per packet.
+func (d *IsoPacketDescriptor) Decode(wire []byte) error {
+	if len(wire) < IsoPacketDescriptorSize {
+		return io.ErrUnexpectedEOF
+	}
+	d.Offset = binary.BigEndian.Uint32(wire[0:4])
+	d.Length = binary.BigEndian.Uint32(wire[4:8])
+	d.ActualLength = binary.BigEndian.Uint32(wire[8:12])
+	d.Status = int32(binary.BigEndian.Uint32(wire[12:16]))
+	return nil
+}
+
+func (d *IsoPacketDescriptor) Read(r io.Reader) error {
+	var wire [IsoPacketDescriptorSize]byte
+	if _, err := io.ReadFull(r, wire[:]); err != nil {
+		return err
+	}
+	return d.Decode(wire[:])
+}
+
+func (d IsoPacketDescriptor) Write(w io.Writer) error {
+	if err := binary.Write(w, binary.BigEndian, d.Offset); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, d.Length); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, d.ActualLength); err != nil {
+		return err
+	}
+	return binary.Write(w, binary.BigEndian, d.Status)
 }
 
 func (r *RetSubmit) Write(w io.Writer) error {

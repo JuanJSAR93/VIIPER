@@ -14,6 +14,8 @@ import (
 	"github.com/Alia5/VIIPER/viipertypes"
 )
 
+var attachLocalhostClientWithResult = api.AttachLocalhostClientWithResult
+
 // BusDeviceAdd returns a handler to add devices to a bus.
 func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 	return func(req *api.Request, res *api.Response, logger *slog.Logger) error {
@@ -74,27 +76,23 @@ func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 			return apierror.ErrInternal("failed to get device metadata from context")
 		}
 
-		connTimer := device.GetConnTimer(devCtx)
-		if connTimer != nil {
-			connTimer.Reset(apiSrv.Config().DeviceHandlerConnectTimeout)
+		registration, registered := b.GetDeviceRegistration(dev, devCtx)
+		if !registered {
+			return apierror.ErrConflict(
+				"device registration changed during creation")
 		}
-		go func() {
-			select {
-			case <-devCtx.Done():
-				connTimer.Stop()
-				return
-			case <-connTimer.C:
-				deviceIDStr := fmt.Sprintf("%d", exportMeta.DevID)
-				if err := s.RemoveDeviceByID(uint32(busID), deviceIDStr); err != nil {
-					logger.Error("timeout: failed to remove device", "busID", busID, "deviceID", deviceIDStr, "error", err)
-				} else {
-					logger.Info("timeout: removed device (no connection)", "busID", busID, "deviceID", deviceIDStr)
-				}
-			}
-		}()
+		descriptor, err := s.SnapshotDeviceDescriptor(registration)
+		if err != nil {
+			_, _ = s.RemoveDeviceRegistrationIfPresent(registration)
+			return apierror.ErrInternal(fmt.Sprintf(
+				"failed to snapshot device descriptor: %v", err))
+		}
 
+		apiSrv.ScheduleDeviceCleanup(registration)
+
+		autoAttachResult := api.AutoAttachResult{}
 		if apiSrv.Config().AutoAttachLocalClient {
-			err := api.AttachLocalhostClient(
+			autoAttachResult, err = attachLocalhostClientWithResult(
 				req.Ctx,
 				exportMeta,
 				s.GetListenPort(),
@@ -110,12 +108,14 @@ func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 		}
 
 		payload, err := json.Marshal(viipertypes.Device{
-			BusID:          uint32(busID),
-			DevID:          fmt.Sprintf("%d", exportMeta.DevID),
-			Vid:            fmt.Sprintf("0x%04x", dev.GetDescriptor().Device.IDVendor),
-			Pid:            fmt.Sprintf("0x%04x", dev.GetDescriptor().Device.IDProduct),
-			Type:           name,
-			DeviceSpecific: dev.GetDeviceSpecificArgs(),
+			BusID:            uint32(busID),
+			DevID:            fmt.Sprintf("%d", exportMeta.DevID),
+			Vid:              fmt.Sprintf("0x%04x", descriptor.Device.IDVendor),
+			Pid:              fmt.Sprintf("0x%04x", descriptor.Device.IDProduct),
+			Type:             name,
+			DeviceSpecific:   dev.GetDeviceSpecificArgs(),
+			USBIPPort:        autoAttachResult.USBIPPort,
+			USBIPOwnerSerial: autoAttachResult.USBIPOwnerSerial,
 		})
 		if err != nil {
 			return apierror.ErrInternal(fmt.Sprintf("failed to marshal response: %v", err))
@@ -124,4 +124,16 @@ func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 		res.JSON = string(payload)
 		return nil
 	}
+}
+
+func parseXboxOneBusID(req *api.Request) (uint32, error) {
+	idStr, ok := req.Params["id"]
+	if !ok {
+		return 0, apierror.ErrBadRequest("missing id parameter")
+	}
+	busID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		return 0, apierror.ErrBadRequest(fmt.Sprintf("invalid busId: %v", err))
+	}
+	return uint32(busID), nil
 }
