@@ -1,4 +1,4 @@
-package xboxonehid
+package xboxone
 
 import (
 	"context"
@@ -33,14 +33,15 @@ type createOptions struct {
 // interface for joy.cpl/DirectInput to enumerate it.
 type XboxOneHID struct {
 	inputMu    sync.Mutex
-	input      InputState
-	inputCh    chan InputState
+	input      HIDInputState
+	inputCh    chan HIDInputState
 	descriptor usb.Descriptor
+	deviceType string
 }
 
 // New creates the Xbox One HID-compatible profile. The same implementation
 // also serves Xbox Series X|S with a different PID/product string.
-func New(o *device.CreateOptions, profile string) (*XboxOneHID, error) {
+func NewHID(o *device.CreateOptions, profile string) (*XboxOneHID, error) {
 	if profile != profileXboxOne && profile != profileXboxSeries {
 		return nil, fmt.Errorf("unsupported Xbox HID profile %q", profile)
 	}
@@ -56,8 +57,12 @@ func New(o *device.CreateOptions, profile string) (*XboxOneHID, error) {
 	}
 
 	d := &XboxOneHID{
-		inputCh:    make(chan InputState, 1),
-		descriptor: makeDescriptor(profile, serial),
+		inputCh:    make(chan HIDInputState, 1),
+		descriptor: makeHIDDescriptor(profile, serial),
+		deviceType: "xboxonehid",
+	}
+	if profile == profileXboxSeries {
+		d.deviceType = "xboxserieshid"
 	}
 	if o != nil {
 		if o.IDVendor != nil {
@@ -67,13 +72,13 @@ func New(o *device.CreateOptions, profile string) (*XboxOneHID, error) {
 			d.descriptor.Device.IDProduct = *o.IDProduct
 		}
 	}
-	d.inputCh <- InputState{}
+	d.inputCh <- HIDInputState{}
 	return d, nil
 }
 
 // UpdateInputState publishes the newest semantic state and wakes the HID IN
 // endpoint. The one-slot queue intentionally coalesces high-rate updates.
-func (d *XboxOneHID) UpdateInputState(state InputState) {
+func (d *XboxOneHID) UpdateInputState(state HIDInputState) {
 	d.inputMu.Lock()
 	d.input = state
 	select {
@@ -84,7 +89,7 @@ func (d *XboxOneHID) UpdateInputState(state InputState) {
 	d.inputMu.Unlock()
 }
 
-func (d *XboxOneHID) currentInputState() InputState {
+func (d *XboxOneHID) currentInputState() HIDInputState {
 	d.inputMu.Lock()
 	state := d.input
 	d.inputMu.Unlock()
@@ -98,7 +103,7 @@ func (d *XboxOneHID) HandleTransfer(ctx context.Context, ep uint32, dir uint32, 
 		case <-ctx.Done():
 			return nil
 		case state := <-d.inputCh:
-			report := make([]byte, InputReportSize)
+			report := make([]byte, HIDInputReportSize)
 			(&state).BuildReportInto(report)
 			return report
 		}
@@ -121,7 +126,7 @@ func (d *XboxOneHID) HandleControl(bmRequestType, bRequest uint8, wValue, _ uint
 	)
 	reportType := uint8(wValue >> 8)
 	if bmRequestType == classIn && bRequest == getReport && reportType == inputReport {
-		report := make([]byte, InputReportSize)
+		report := make([]byte, HIDInputReportSize)
 		state := d.currentInputState()
 		(&state).BuildReportInto(report)
 		if int(wLength) < len(report) {
@@ -137,11 +142,15 @@ func (d *XboxOneHID) HandleControl(bmRequestType, bRequest uint8, wValue, _ uint
 
 func (d *XboxOneHID) GetDescriptor() *usb.Descriptor { return &d.descriptor }
 
+// VIIPERDeviceType keeps dynamic stream dispatch stable after the HID
+// implementation was colocated with the retained GIP implementation.
+func (d *XboxOneHID) VIIPERDeviceType() string { return d.deviceType }
+
 func (d *XboxOneHID) GetDeviceSpecificArgs() map[string]any {
 	return map[string]any{"serial_number": d.descriptor.Strings[3]}
 }
 
-func makeDescriptor(profile, serial string) usb.Descriptor {
+func makeHIDDescriptor(profile, serial string) usb.Descriptor {
 	productID := defaultHIDPIDOne
 	product := "VIIPER Xbox One Controller"
 	if profile == profileXboxSeries {
@@ -165,7 +174,7 @@ func makeDescriptor(profile, serial string) usb.Descriptor {
 			HID: &usb.HIDFunction{
 				Descriptor: usb.HIDDescriptor{BcdHID: 0x0111, BCountryCode: 0,
 					Descriptors: []usb.HIDSubDescriptor{{Type: usb.ReportDescType}}},
-				ReportDescriptor: reportDescriptor,
+				ReportDescriptor: hidReportDescriptor,
 			},
 			Endpoints: []usb.EndpointDescriptor{
 				{BEndpointAddress: 0x81, BMAttributes: 0x03, WMaxPacketSize: 64, BInterval: 1},
@@ -180,7 +189,7 @@ func makeDescriptor(profile, serial string) usb.Descriptor {
 
 // The report has 16 buttons, X/Y/Rx/Ry signed axes and Z/Rz unsigned
 // triggers: 16 + 4*16 + 2*16 = 112 bits = 14 bytes.
-var reportDescriptor = hid.ReportDescriptor{Items: []hid.Item{
+var hidReportDescriptor = hid.ReportDescriptor{Items: []hid.Item{
 	hid.UsagePage{Page: hid.UsagePageGenericDesktop},
 	hid.Usage{Usage: hid.UsageGamePad},
 	hid.Collection{Kind: hid.CollectionApplication, Items: []hid.Item{

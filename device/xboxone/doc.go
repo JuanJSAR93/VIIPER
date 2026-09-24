@@ -1,5 +1,7 @@
-// Package xboxone contains transport-neutral Xbox controller semantics and a
-// narrowly scoped MS-GIPUSB 1.0 wire-codec subset.
+// Package xboxone contains the shared Xbox One/Series semantic model plus two
+// output personas: the retained MS-GIP/XInput path and the HID/DirectInput
+// compatibility path used by joy.cpl. Both personas intentionally live in
+// this package so button and axis mapping can be tested from one source.
 //
 // The implemented wire surface includes strict four-byte single-packet
 // headers, exact standard Gamepad Input and Direct Motor messages, the Guide

@@ -105,6 +105,13 @@ not a claim that every Xbox One or Series firmware, Windows binding, or physical
 controller has been validated. See the [Xbox One API notes](docs/api/xboxone-exact-removal.md)
 and the [Xbox One provenance record](device/xboxone/PROVENANCE.md).
 
+The two Xbox One/Series output personas are implemented together in
+`device/xboxone`: the retained GIP/XInput persona and the HID/DirectInput
+compatibility persona. They share the `InputStateV1` semantic model and its
+button/axis mapping. The small `internal/devicecatalog/xboxonehid.go` file only
+registers the public `xboxonehid` and `xboxserieshid` factory names; it is not a
+second device implementation.
+
 ### Xbox One/Series visible in `joy.cpl`
 
 The retained `xboxone-client` path intentionally exposes the native vendor-specific
