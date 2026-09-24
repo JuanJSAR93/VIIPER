@@ -207,26 +207,22 @@ func TestControllerHostCommandExtendedInitializationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestControllerLifecycleExtendedInitializationDoesNotReplaceStart(t *testing.T) {
+func TestControllerLifecycleExtendedInitializationStartsWindowsHost(t *testing.T) {
 	lifecycle := NewControllerLifecycle(0)
-	before := lifecycle.Snapshot()
 	wire := []byte{
 		0x05, 0x20, 0x02, 0x0f,
 		0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
 		0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	}
 	claim, present, err := lifecycle.ClaimHostWire(1, wire)
-	if err != nil || present || claim.Valid() {
+	if err != nil || !present || !claim.Valid() {
 		t.Fatalf("extended initialization = (claim %+v, present %t, err %v)",
 			claim, present, err)
 	}
-	if after := lifecycle.Snapshot(); after != before {
-		t.Fatalf("extended initialization changed lifecycle: before=%+v after=%+v",
-			before, after)
+	if lifecycle.State() != ControllerLifecycleArrival || !lifecycle.Snapshot().PendingTransition {
+		t.Fatalf("extended initialization did not start lifecycle: %+v", lifecycle.Snapshot())
 	}
-	start := claimLifecycleCommand(t, &lifecycle, 2,
-		setStateCommand(3, SetDeviceStateStart))
-	requireLifecycleAction(t, start, 0, 3, ControllerLifecycleSendCurrentStatus)
+	requireLifecycleAction(t, claim, 0, 3, ControllerLifecycleSendCurrentStatus)
 }
 
 func TestControllerLifecycleSecurityDataCompleteIsActiveOrIdleNoOp(t *testing.T) {

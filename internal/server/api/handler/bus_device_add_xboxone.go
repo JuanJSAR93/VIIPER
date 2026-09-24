@@ -82,6 +82,7 @@ func BusDeviceAddAuthorizedXboxOne(
 			registry.ProductionXboxOneRetainedUSBRequest{
 				BusID: busID,
 				Options: xboxone.ProductionRetainedUSBDeviceOptions{
+					BaseGamepadMetadata: create.BaseGamepadMetadata,
 					Identity: xboxone.ControllerIdentity{
 						VendorID:         create.Identity.VendorID,
 						ProductID:        create.Identity.ProductID,

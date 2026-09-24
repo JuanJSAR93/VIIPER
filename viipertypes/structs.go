@@ -161,14 +161,18 @@ type XboxOneAuthorizedFeedbackV1 struct {
 // from DeviceCreateRequest so generic deviceSpecific JSON cannot weaken the
 // identity, lifecycle-generation, or feedback-ownership boundaries.
 type XboxOneAuthorizedCreateRequestV1 struct {
-	Version                      uint16                      `json:"version"`
-	IdentityAuthorizationGranted bool                        `json:"identityAuthorizationGranted"`
-	Identity                     XboxOneAuthorizedIdentityV1 `json:"identity"`
-	USB                          XboxOneAuthorizedUSBV1      `json:"usb"`
-	Strings                      XboxOneAuthorizedStringsV1  `json:"strings"`
-	Feedback                     XboxOneAuthorizedFeedbackV1 `json:"feedback"`
-	ImportDeviceID               uint64                      `json:"importDeviceId"`
-	LocalTimeoutMilliseconds     uint32                      `json:"localTimeoutMilliseconds"`
+	Version                      uint16 `json:"version"`
+	IdentityAuthorizationGranted bool   `json:"identityAuthorizationGranted"`
+	// BaseGamepadMetadata selects the 18-byte standard GIP gamepad input
+	// report used by xone and the Windows XboxComposite path. The legacy
+	// Console Function Map shape remains the default for older callers.
+	BaseGamepadMetadata      bool                        `json:"baseGamepadMetadata,omitempty"`
+	Identity                 XboxOneAuthorizedIdentityV1 `json:"identity"`
+	USB                      XboxOneAuthorizedUSBV1      `json:"usb"`
+	Strings                  XboxOneAuthorizedStringsV1  `json:"strings"`
+	Feedback                 XboxOneAuthorizedFeedbackV1 `json:"feedback"`
+	ImportDeviceID           uint64                      `json:"importDeviceId"`
+	LocalTimeoutMilliseconds uint32                      `json:"localTimeoutMilliseconds"`
 }
 
 // UnmarshalJSON implements custom unmarshaling to accept both uint16 and hex string formats

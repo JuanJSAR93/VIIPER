@@ -194,26 +194,41 @@ func newAttachIOCTL(meta *usbip.ExportMeta, port uint16) (attachIOCTL, error) {
 }
 
 func nativeUSBIPHost() string {
+	if configured := strings.TrimSpace(os.Getenv("VIIPER_USBIP_HOST")); configured != "" {
+		return configured
+	}
 	interfaces, err := net.Interfaces()
 	if err == nil {
-		for _, iface := range interfaces {
-			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-				continue
-			}
-			addresses, err := iface.Addrs()
-			if err != nil {
-				continue
-			}
-			for _, address := range addresses {
-				var ip net.IP
-				switch value := address.(type) {
-				case *net.IPNet:
-					ip = value.IP
-				case *net.IPAddr:
-					ip = value.IP
+		// WSL/Hyper-V adapters can be the first active interface returned by
+		// Windows, but usbip-win2's kernel WSK path cannot use that address for
+		// the host-side loopback attach. Prefer a physical/default-route adapter
+		// and keep the old fallback below for machines without one.
+		for _, allowVirtual := range []bool{false, true} {
+			for _, iface := range interfaces {
+				if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+					continue
 				}
-				if ip4 := ip.To4(); ip4 != nil && !ip4.IsLoopback() {
-					return ip4.String()
+				virtual := strings.Contains(strings.ToLower(iface.Name), "vethernet") ||
+					strings.Contains(strings.ToLower(iface.Name), "hyper-v") ||
+					strings.Contains(strings.ToLower(iface.Name), "wsl")
+				if virtual != allowVirtual {
+					continue
+				}
+				addresses, err := iface.Addrs()
+				if err != nil {
+					continue
+				}
+				for _, address := range addresses {
+					var ip net.IP
+					switch value := address.(type) {
+					case *net.IPNet:
+						ip = value.IP
+					case *net.IPAddr:
+						ip = value.IP
+					}
+					if ip4 := ip.To4(); ip4 != nil && !ip4.IsLoopback() {
+						return ip4.String()
+					}
 				}
 			}
 		}
@@ -239,6 +254,9 @@ func attachViaCommand(ctx context.Context, deviceExportMeta *usbip.ExportMeta, u
 	if alias, aliasErr := usbip.ExportBusID(*deviceExportMeta); aliasErr == nil && usbip.ValidProductionXboxOneBusID(alias) {
 		arguments = append(arguments, "-t")
 		arguments = append(arguments, "--once")
+	}
+	if mode := strings.ToLower(strings.TrimSpace(os.Getenv("VIIPER_USBIP_RECEIVE_MODE"))); mode == "zero-copy" || mode == "low-latency" {
+		arguments = append(arguments, "--receive-mode", mode)
 	}
 	logger.Info("Auto-attaching localhost client", "busID", deviceExportMeta.BusID, "deviceID", deviceExportMeta.DevID)
 

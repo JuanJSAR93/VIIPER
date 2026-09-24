@@ -82,6 +82,10 @@ func NewUSBServer(config *C.USBServerConfig, outHandle *C.USBServerHandle, logCa
 		ConnectionTimeout:       connectionTimeout,
 		BusCleanupTimeout:       busCleanupTimeout,
 		WriteBatchFlushInterval: writeBatchFlushInterval,
+		// Xbox One/Series uses the retained, generation-fenced GIP path. The
+		// authority is created inside the server and never exposed as a
+		// generic deviceSpecific value.
+		RetainedImportAuthorityID: uint64(time.Now().UnixNano()),
 	}, logger, nil)
 
 	readyChan := s.Ready()

@@ -38,6 +38,10 @@ type XboxOneClient struct {
 	PauseBeforeActivate bool   `help:"leave the authorized persona ready for an external usbip attach test"`
 	HoldSeconds         int    `help:"keep the attached persona alive after the input acknowledgement" default:"3"`
 	InputTest           bool   `help:"send a live input matrix and verify each semantic ACK"`
+	RepeatInputSeconds  int    `help:"repeat buttons, triggers and sticks for N seconds while the controller remains active" default:"0"`
+	DynamicPattern      string `help:"send a timed GIP pattern: a-pulse,dpad-pulse,trigger-ramp,stick-sweep,mixed"`
+	DynamicPatternSecs  int    `help:"duration of the timed GIP pattern in seconds" default:"8"`
+	DynamicPatternDelay int    `help:"seconds to wait before the first timed GIP state" default:"0"`
 	BusID               uint   `help:"use an existing VIIPER bus instead of creating a new one"`
 	Profile             string `help:"Xbox identity profile" enum:"xboxone,xboxseries" default:"xboxone"`
 }
@@ -136,6 +140,7 @@ func (c *XboxOneClient) Run() error {
 	create := viipertypes.XboxOneAuthorizedCreateRequestV1{
 		Version:                      1,
 		IdentityAuthorizationGranted: true,
+		BaseGamepadMetadata:          true,
 		Identity: viipertypes.XboxOneAuthorizedIdentityV1{
 			VendorID: vendorID, ProductID: productID, DeviceReleaseBCD: 0x0100,
 			DeviceID: deviceID, FirmwareMajor: 1, FirmwareBuild: 1,
@@ -225,15 +230,27 @@ func (c *XboxOneClient) Run() error {
 	if err := writeXboxOneBroker(stream, xboxOneSemanticInput, 2, wire[:]); err != nil {
 		return fmt.Errorf("enviar estado neutral: %w", err)
 	}
-	ack, err := readXboxOneBroker(stream)
-	if err != nil || ack.typ != xboxOneSemanticAck || ack.correlation != 2 ||
-		len(ack.payload) != 1 || ack.payload[0] != 1 {
-		return fmt.Errorf("SemanticInputAck inválido: frame=%+v err=%v", ack, err)
+	if err := readXboxOneSemanticAck(stream, 2); err != nil {
+		return fmt.Errorf("SemanticInputAck inválido: %w", err)
 	}
 	fmt.Println("broker: estado neutral aceptado")
 	if c.InputTest {
-		if err := runXboxOneInputMatrix(stream, wire[:]); err != nil {
-			return err
+		var inputErr error
+		if strings.TrimSpace(c.DynamicPattern) != "" {
+			seconds := c.DynamicPatternSecs
+			if seconds < 1 {
+				seconds = 1
+			}
+			inputErr = runXboxOneDynamicPattern(stream, wire[:], c.DynamicPattern,
+				time.Duration(seconds)*time.Second,
+				time.Duration(c.DynamicPatternDelay)*time.Second)
+		} else if c.RepeatInputSeconds > 0 {
+			inputErr = runXboxOneRepeatedInputMatrix(stream, wire[:], time.Duration(c.RepeatInputSeconds)*time.Second)
+		} else {
+			inputErr = runXboxOneInputMatrix(stream, wire[:])
+		}
+		if inputErr != nil {
+			return inputErr
 		}
 	}
 	fmt.Printf("PRUEBA VIIPER Xbox One completada; manteniendo el dispositivo %d segundos para inspección\n",
@@ -241,6 +258,141 @@ func (c *XboxOneClient) Run() error {
 	if c.HoldSeconds > 0 {
 		time.Sleep(time.Duration(c.HoldSeconds) * time.Second)
 	}
+	return nil
+}
+
+// runXboxOneDynamicPattern sends slowly changing states so the USB/IP and GIP
+// layers have time to expose each transition to Windows. The existing matrix
+// is useful for protocol ACKs, but changes states too quickly to distinguish a
+// transport problem from a consumer sampling issue.
+func runXboxOneDynamicPattern(stream net.Conn, wire []byte, pattern string, duration, delay time.Duration) error {
+	type namedState struct {
+		name  string
+		state xboxone.InputStateV1
+	}
+	neutral := xboxone.InputStateV1{}
+	patterns := map[string][]namedState{
+		"a-pulse": {
+			{"A", xboxone.InputStateV1{A: true}}, {"neutral", neutral},
+		},
+		"dpad-pulse": {
+			{"up", xboxone.InputStateV1{DPadUp: true}},
+			{"right", xboxone.InputStateV1{DPadRight: true}},
+			{"down", xboxone.InputStateV1{DPadDown: true}},
+			{"left", xboxone.InputStateV1{DPadLeft: true}}, {"neutral", neutral},
+		},
+		"trigger-ramp": {
+			{"LT-25", xboxone.InputStateV1{LeftTrigger: 256}},
+			{"LT-50", xboxone.InputStateV1{LeftTrigger: 512}},
+			{"LT-100", xboxone.InputStateV1{LeftTrigger: 1023}},
+			{"RT-25", xboxone.InputStateV1{RightTrigger: 256}},
+			{"RT-50", xboxone.InputStateV1{RightTrigger: 512}},
+			{"RT-100", xboxone.InputStateV1{RightTrigger: 1023}},
+			{"neutral", neutral},
+		},
+		"stick-sweep": {
+			{"left-top", xboxone.InputStateV1{LeftStickX: -32768, LeftStickY: 32767}},
+			{"right-top", xboxone.InputStateV1{LeftStickX: 32767, LeftStickY: 32767}},
+			{"right-bottom", xboxone.InputStateV1{LeftStickX: 32767, LeftStickY: -32768}},
+			{"left-bottom", xboxone.InputStateV1{LeftStickX: -32768, LeftStickY: -32768}},
+			{"RS-center", xboxone.InputStateV1{RightStickX: 16384, RightStickY: -16384}},
+			{"neutral", neutral},
+		},
+		"mixed": {
+			{"A+LT", xboxone.InputStateV1{A: true, LeftTrigger: 1023}},
+			{"B+RT", xboxone.InputStateV1{B: true, RightTrigger: 1023}},
+			{"dpad+stick", xboxone.InputStateV1{DPadRight: true, LeftStickX: 20000}},
+			{"neutral", neutral},
+		},
+	}
+	sequence, ok := patterns[strings.ToLower(strings.TrimSpace(pattern))]
+	if !ok {
+		return fmt.Errorf("patrón GIP no soportado %q", pattern)
+	}
+	deadline := time.Now().Add(duration)
+	revision := uint64(3)
+	step := 450 * time.Millisecond
+	if delay > 0 {
+		// Optional settle-time experiment: compare this with delay=0 to see
+		// whether Windows closes the GIP transport before input starts.
+		time.Sleep(delay)
+	}
+	for index := 0; time.Now().Before(deadline); index++ {
+		test := sequence[index%len(sequence)]
+		if err := sendXboxOneSemanticState(stream, wire, revision, test.state); err != nil {
+			return fmt.Errorf("patrón %s estado %s: %w", pattern, test.name, err)
+		}
+		fmt.Printf("broker: patrón=%s estado=%s revision=%d\n", pattern, test.name, revision)
+		revision++
+		time.Sleep(step)
+	}
+	if err := sendXboxOneSemanticState(stream, wire, revision, neutral); err != nil {
+		return fmt.Errorf("patrón %s estado neutral final: %w", pattern, err)
+	}
+	fmt.Printf("broker: patrón=%s finalizado\n", pattern)
+	return nil
+}
+
+func runXboxOneRepeatedInputMatrix(stream net.Conn, wire []byte, duration time.Duration) error {
+	// Each state is held long enough for joy.cpl to repaint its Test tab. The
+	// neutral state between actions also makes button releases visible instead
+	// of leaving the last button latched on screen.
+	type namedState struct {
+		name  string
+		state xboxone.InputStateV1
+	}
+	sequence := []namedState{
+		{"neutral", xboxone.InputStateV1{}},
+		{"A", xboxone.InputStateV1{A: true}},
+		{"B", xboxone.InputStateV1{B: true}},
+		{"X", xboxone.InputStateV1{X: true}},
+		{"Y", xboxone.InputStateV1{Y: true}},
+		{"menu", xboxone.InputStateV1{Menu: true}},
+		{"view", xboxone.InputStateV1{View: true}},
+		{"dpad-up", xboxone.InputStateV1{DPadUp: true}},
+		{"dpad-right", xboxone.InputStateV1{DPadRight: true}},
+		{"dpad-down", xboxone.InputStateV1{DPadDown: true}},
+		{"dpad-left", xboxone.InputStateV1{DPadLeft: true}},
+		{"left-bumper", xboxone.InputStateV1{LeftBumper: true}},
+		{"right-bumper", xboxone.InputStateV1{RightBumper: true}},
+		{"left-stick-click", xboxone.InputStateV1{LeftStickButton: true}},
+		{"right-stick-click", xboxone.InputStateV1{RightStickButton: true}},
+		{"guide", xboxone.InputStateV1{Guide: true}},
+		{"left-trigger", xboxone.InputStateV1{LeftTrigger: 1023}},
+		{"right-trigger", xboxone.InputStateV1{RightTrigger: 1023}},
+		{"sticks-left-top", xboxone.InputStateV1{LeftStickX: -32768, LeftStickY: 32767}},
+		{"sticks-right-bottom", xboxone.InputStateV1{LeftStickX: 32767, LeftStickY: -32768}},
+		{"right-stick-left-top", xboxone.InputStateV1{RightStickX: -32768, RightStickY: 32767}},
+		{"right-stick-right-bottom", xboxone.InputStateV1{RightStickX: 32767, RightStickY: -32768}},
+		{"neutral-final", xboxone.InputStateV1{}},
+	}
+	deadline := time.Now().Add(duration)
+	step := 50 * time.Millisecond
+	stateHold := 350 * time.Millisecond
+	revision := uint64(3)
+	cycle := 0
+	for time.Now().Before(deadline) {
+		cycle++
+		for _, test := range sequence {
+			if time.Now().After(deadline) {
+				break
+			}
+			stateDeadline := time.Now().Add(stateHold)
+			for time.Now().Before(stateDeadline) && time.Now().Before(deadline) {
+				if err := sendXboxOneSemanticState(stream, wire, revision, test.state); err != nil {
+					return fmt.Errorf("estado repetido %s: %w", test.name, err)
+				}
+				revision++
+				time.Sleep(step)
+			}
+		}
+		fmt.Printf("broker: ciclo de entrada repetida %d completado\n", cycle)
+	}
+	// Always leave the virtual controller in a neutral state before returning.
+	if err := sendXboxOneSemanticState(stream, wire, revision, xboxone.InputStateV1{}); err != nil {
+		return fmt.Errorf("estado neutral final: %w", err)
+	}
+	fmt.Printf("broker: prueba repetida finalizada (%d segundos solicitados)\n", int(duration/time.Second))
 	return nil
 }
 
@@ -326,7 +478,6 @@ func runXboxOneInputMatrix(stream net.Conn, wire []byte) error {
 		{"left-stick-click", xboxone.InputStateV1{LeftStickButton: true}},
 		{"right-stick-click", xboxone.InputStateV1{RightStickButton: true}},
 		{"guide", xboxone.InputStateV1{Guide: true}},
-		{"share", xboxone.InputStateV1{Share: true}},
 	}
 	revision := uint64(3)
 	for _, test := range buttonStates {
@@ -366,12 +517,35 @@ func sendXboxOneSemanticState(stream net.Conn, wire []byte, revision uint64, sta
 	if err := writeXboxOneBroker(stream, xboxOneSemanticInput, revision, wire); err != nil {
 		return err
 	}
-	ack, err := readXboxOneBroker(stream)
-	if err != nil || ack.typ != xboxOneSemanticAck || ack.correlation != revision ||
-		len(ack.payload) != 1 || ack.payload[0] != 1 {
-		return fmt.Errorf("SemanticInputAck inválido: frame=%+v err=%v", ack, err)
+	if err := readXboxOneSemanticAck(stream, revision); err != nil {
+		return err
 	}
 	return nil
+}
+
+func readXboxOneSemanticAck(stream net.Conn, revision uint64) error {
+	for {
+		ack, err := readXboxOneBroker(stream)
+		if err != nil {
+			return err
+		}
+		// The controller can emit canonical feedback asynchronously between
+		// semantic input acknowledgements. Confirming it is part of the live
+		// broker contract; otherwise the next input read is misaligned and the
+		// client stops before the requested test duration.
+		if ack.typ == xboxOneCanonicalFeedback {
+			if err := writeXboxOneBroker(stream, xboxOneCanonicalAck,
+				ack.correlation, []byte{1}); err != nil {
+				return fmt.Errorf("confirmar feedback canónico: %w", err)
+			}
+			continue
+		}
+		if ack.typ != xboxOneSemanticAck || ack.correlation != revision ||
+			len(ack.payload) != 1 || ack.payload[0] != 1 {
+			return fmt.Errorf("frame=%+v", ack)
+		}
+		return nil
+	}
 }
 
 type xboxOneAPIClient struct {

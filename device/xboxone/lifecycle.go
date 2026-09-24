@@ -41,10 +41,10 @@ const (
 	ControllerHostCommandMetadataRequest ControllerHostCommandKind = iota + 1
 	ControllerHostCommandSetDeviceState
 	// ControllerHostCommandExtendedSetDeviceStateInitialization identifies
-	// the exact 15-byte compatibility frame sent during Windows and SDL GIP
-	// initialization. Its body is not a documented lifecycle state, so it is
-	// acknowledged without changing controller state; a separate one-byte
-	// Set Device State: Start remains mandatory.
+	// the exact 15-byte compatibility frame sent by the current Windows GIP
+	// host during Xbox One/Series initialization. Windows versions used by
+	// usbip-win2 can use this frame as the only Start signal, so the lifecycle
+	// maps it to the same transition as the one-byte Start command.
 	ControllerHostCommandExtendedSetDeviceStateInitialization
 	// ControllerHostCommandSecurityDataComplete identifies the exact
 	// two-byte completion marker the Windows host sends after succeeding the
@@ -656,9 +656,14 @@ func (lifecycle *ControllerLifecycle) selectHostCommand(
 		switch lifecycle.core.state {
 		case ControllerLifecycleArrival, ControllerLifecycleMetadata,
 			ControllerLifecycleIdle:
-			// This is a startup compatibility probe, not state 6. Preserve the
-			// entire lifecycle and wait for the ordinary one-byte START.
-			return transition, false, nil
+			// The extended Xbox One S initialization frame is a Start variant
+			// on the Windows path captured with usbip-win2. Treating it as a
+			// no-op leaves the persona forever gated: the host never submits the
+			// ordinary one-byte Start afterwards, so no 0x20/0x00 input report
+			// can be admitted. Reuse the canonical Start transition so both
+			// host dialects produce the same status, initial input, and permit
+			// actions.
+			return lifecycle.startTransition(transition), true, nil
 		default:
 			return controllerLifecycleTransition{}, false, ErrUnexpectedLifecycleCommand
 		}

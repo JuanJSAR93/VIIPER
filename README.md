@@ -105,6 +105,88 @@ not a claim that every Xbox One or Series firmware, Windows binding, or physical
 controller has been validated. See the [Xbox One API notes](docs/api/xboxone-exact-removal.md)
 and the [Xbox One provenance record](device/xboxone/PROVENANCE.md).
 
+### Xbox One/Series visible in `joy.cpl`
+
+The retained `xboxone-client` path intentionally exposes the native vendor-specific
+GIP interface. Windows binds that interface to `XboxComposite`/XInput, so it is
+not the correct path for `joy.cpl`. For a controller that must appear in the
+Windows game-controller panel and DirectInput, use the HID compatibility types:
+
+```text
+bus/{busId}/add {"type":"xboxonehid"}
+bus/{busId}/add {"type":"xboxserieshid"}
+```
+
+Para una prueba manual de 30 segundos con `joy.cpl`, ejecuta desde la raíz del
+repositorio:
+
+```powershell
+python scripts/run_xbox_one_joy_test.py --profile xboxone
+python scripts/run_xbox_one_joy_test.py --profile xboxseries
+```
+
+Mientras la prueba está ejecutándose, se puede verificar la capa DirectInput
+que utiliza `joy.cpl` con:
+
+```powershell
+python scripts/probe_joycpl.py --seconds 10
+```
+
+El sondeo informa el nombre, GUID, ejes y botones detectados, y muestra cada
+cambio con la etiqueta `axisN` o `buttonN`. La matriz HID prueba los 16 botones
+(`button0` a `button15`), los seis canales de ejes (sticks y triggers) y deja
+el mando en estado neutral antes de desmontarlo.
+
+Para probar la ruta GIP/XboxComposite con el mismo flujo, dejando `joy.cpl`
+abierto y observando también XInput:
+
+```powershell
+python scripts/run_xbox_gip_joy_test.py xboxone
+```
+
+Usa `python scripts/run_xbox_gip_joy_test.py xboxseries` para `045E:0B12`. El script informa `PNP_SEEN` y
+`XINPUT_DYNAMIC_STATE_SEEN`; el segundo debe quedar en `True` cuando los
+reportes dinámicos lleguen correctamente a Windows.
+
+El script crea el bus, adjunta el dispositivo con `usbip-win2`, abre el stream,
+repite todos los controles y desmonta el dispositivo al terminar. Usa
+`--viiper` y `--usbip` si los ejecutables no están en las rutas habituales.
+
+These types follow the HID implementations used by the DS4, DualSense, NS2 Pro,
+keyboard, and mouse devices in this repository: one HID gamepad interface, a
+report descriptor, interrupt IN/OUT endpoints, and a semantic input stream.
+The report contains 16 buttons, four signed stick axes, and two 10-bit triggers.
+The stream frame is 14 bytes in this order:
+`buttons:u16, leftTrigger:u16, rightTrigger:u16, leftX:i16, leftY:i16,
+rightX:i16, rightY:i16`.
+
+The HID compatibility persona uses VIIPER-owned IDs (`1209:5649` for Xbox One
+and `1209:564A` for Xbox Series) while keeping the product strings
+`VIIPER Xbox One Controller` and `VIIPER Xbox Series X|S Controller`. This is
+deliberate: using Microsoft's `045E:02EA` or `045E:0B12` makes Windows select
+`XboxComposite` before `joy.cpl` can use the HID interface. The native retained
+path remains unchanged and continues to use the Microsoft IDs.
+
+### Juegos que exigen XInput
+
+La ruta HID `xboxonehid`/`xboxserieshid` no puede ser consumida como XInput:
+es una interfaz DirectInput para `joy.cpl`. La ruta GIP One/Series sí intenta
+usar `XboxComposite`, pero debe producir estados dinámicos antes de considerarse
+lista para un juego. La alternativa XInput ya verificada en Windows es el
+perfil VIIPER Xbox 360, que llega al stack `xusb22` y entrega estados a
+`XInputGetState`.
+
+Prueba real del perfil XInput Xbox 360:
+
+```powershell
+python scripts/run_xbox360_xinput_test.py --viiper C:\ruta\a\viiper.exe --seconds 30
+```
+
+El script informa `XINPUT_DYNAMIC_STATE_SEEN` y `XINPUT_A_SEEN`; ambos deben
+ser `True`. Durante esos segundos, TowerFall puede seleccionarlo como mando
+XInput. Esta ruta no pretende cambiar la etiqueta de Xbox 360 a Xbox One: se
+usa porque los juegos que requieren XInput consumen la interfaz, no el nombre.
+
 ### Native DualSense input
 
 The virtual DualSense and DualSense Edge paths carry:
@@ -444,6 +526,17 @@ El perfil Xbox Series crea:
 VID:PID       045E:0B12
 Producto      VIIPER Xbox Series X|S Controller
 ```
+
+La ruta Xbox usa por defecto el perfil GIP estándar compatible con `xone`:
+metadata de `Windows.Xbox.Input.Gamepad`, informe de entrada de 14 bytes y
+mensaje GIP de 18 bytes (`0x20 0x00 <secuencia> 0x0E`). Esto permite que
+Windows lo enumere mediante `XboxComposite`/XInput como un mando Xbox, sin
+USBPcap ni DS4Windows. La variante anterior Console Function Map se conserva
+para integraciones antiguas y no se selecciona desde `xboxone-client`.
+
+La identidad visible sigue siendo propia de VIIPER en PnP, por ejemplo
+`VIIPER Xbox One Controller` o `VIIPER Xbox Series X|S Controller`; que Windows
+use el stack oficial Xbox no elimina esa etiqueta de identificación.
 
 Opciones útiles del cliente:
 

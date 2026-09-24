@@ -755,7 +755,7 @@ func TestDormantRetainedUSBAdapterGoldenLifecycleLatestInputAndFeedback(t *testi
 	}
 }
 
-func TestDormantRetainedUSBAdapterAcceptsExtendedInitializationBeforeStart(t *testing.T) {
+func TestDormantRetainedUSBAdapterStartsFromExtendedInitialization(t *testing.T) {
 	adapter, _, _ := newBoundTestRetainedUSBAdapter(t, []byte{1, 2, 3})
 	configureRetainedTestPersona(t, adapter)
 
@@ -780,20 +780,13 @@ func TestDormantRetainedUSBAdapterAcceptsExtendedInitializationBeforeStart(t *te
 		probe.ActualLength != uint32(len(probeWire)) {
 		t.Fatalf("extended initialization = %+v", probe)
 	}
-	if after := adapter.coordinator.engine.Snapshot(); after != before {
-		t.Fatalf("extended initialization changed persona: before=%+v after=%+v",
+	if after := adapter.coordinator.engine.Snapshot(); !after.ClaimOutstanding {
+		t.Fatalf("extended initialization did not start persona: before=%+v after=%+v",
 			before, after)
 	}
 
-	startWire := []byte{0x05, 0x20, 0x03, 0x01, byte(SetDeviceStateStart)}
-	start, _ := retainedPrepareAndComplete(
-		t, adapter, retainedOUTRequest(41, 5, 5, startWire), 3)
-	if start.Result != retainedusb.ResultSuccess ||
-		start.ActualLength != uint32(len(startWire)) {
-		t.Fatalf("START = %+v", start)
-	}
 	status, statusWire := retainedPrepareAndComplete(
-		t, adapter, retainedINRequest(41, 6, 6, 64), 4)
+		t, adapter, retainedINRequest(41, 5, 5, 64), 3)
 	if status.Result != retainedusb.ResultData || len(statusWire) == 0 {
 		t.Fatalf("current status = %+v wire=% x", status, statusWire)
 	}

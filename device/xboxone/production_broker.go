@@ -34,8 +34,12 @@ var (
 // one authenticated DS4Windows broker lifetime. It deliberately provides no
 // Xbox VID/PID, strings, firmware, or authorization defaults.
 type ProductionRetainedUSBDeviceOptions struct {
-	Identity              ControllerIdentity
-	USB                   ControllerUSBConfig
+	Identity ControllerIdentity
+	USB      ControllerUSBConfig
+	// BaseGamepadMetadata selects the standard 14-byte GIP input payload used
+	// by xone. False preserves the existing Share-capable Console Function Map
+	// persona for callers that still depend on that extension.
+	BaseGamepadMetadata   bool
 	Strings               ControllerUSBIdentityStrings
 	IdentityAuthorization ControllerIdentityAuthorizationDecision
 	FeedbackBinding       ControllerPersonaFeedbackBindingV1
@@ -422,8 +426,11 @@ func PrepareProductionRetainedUSBDevice(
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := profile.BindOfficialGamepadMetadataV1(
-		OfficialGamepadMetadataConsoleFunctionMap)
+	metadataVariant := OfficialGamepadMetadataConsoleFunctionMap
+	if options.BaseGamepadMetadata {
+		metadataVariant = OfficialGamepadMetadataBase
+	}
+	metadata, err := profile.BindOfficialGamepadMetadataV1(metadataVariant)
 	if err != nil {
 		return nil, err
 	}
