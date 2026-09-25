@@ -171,13 +171,13 @@ func xboxOneIdentity(profile C.uint8_t, deviceID uint64) (xboxone.ControllerIden
 		product = "VIIPER Xbox Series X|S Controller"
 	}
 	return xboxone.ControllerIdentity{
-			VendorID: xboxOneVID, ProductID: pid, DeviceReleaseBCD: 0x0100,
-			DeviceID: deviceID, Firmware: xboxone.FirmwareVersion{Major: 1, Build: 1},
-			HardwareMajor: 1,
-		}, xboxone.ControllerUSBIdentityStrings{
-			Manufacturer: "©Microsoft Corporation", Product: product,
-			Serial: fmt.Sprintf("%016xA1B2C3D4E5F60706", deviceID),
-		}
+		VendorID: xboxOneVID, ProductID: pid, DeviceReleaseBCD: 0x0100,
+		DeviceID: deviceID, Firmware: xboxone.FirmwareVersion{Major: 1, Build: 1},
+		HardwareMajor: 1,
+	}, xboxone.ControllerUSBIdentityStrings{
+		Manufacturer: "©Microsoft Corporation", Product: product,
+		Serial: fmt.Sprintf("%016xA1B2C3D4E5F60706", deviceID),
+	}
 }
 
 // CreateXboxOneDevice creates an official GIP/XGIP gamepad persona using the
