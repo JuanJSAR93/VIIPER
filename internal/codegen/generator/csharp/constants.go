@@ -577,7 +577,7 @@ public static class {{.Name}}
     /// <summary>
     /// Try to get the value for the given key.
     /// </summary>
-    public static bool TryGetValue({{.KeyType}} key, out {{.ValueType}} value)
+    public static bool TryGetValue({{.KeyType}} key, out {{nullableType .ValueType}} value)
     {
         return _map.TryGetValue(key, out value);
     }

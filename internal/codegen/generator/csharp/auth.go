@@ -44,13 +44,12 @@ internal static class ViiperAuth
             throw new ArgumentException("Password cannot be empty", nameof(password));
         }
 
-        using var pbkdf2 = new Rfc2898DeriveBytes(
+        return Rfc2898DeriveBytes.Pbkdf2(
             password,
             Encoding.UTF8.GetBytes(PBKDF2Salt),
             PBKDF2Iterations,
-            HashAlgorithmName.SHA256
-        );
-        return pbkdf2.GetBytes(32);
+            HashAlgorithmName.SHA256,
+            32);
     }
 
     /// <summary>
@@ -124,7 +123,8 @@ internal static class ViiperAuth
             var buffer = new byte[4096];
             int bytesRead;
             while (errorBuilder.Length < 4096 &&
-                (bytesRead = await stream.ReadAsync(buffer, 0, 4096 - errorBuilder.Length, cancellationToken)) > 0)
+                (bytesRead = await stream.ReadAsync(
+                    buffer.AsMemory(0, 4096 - errorBuilder.Length), cancellationToken)) > 0)
             {
                 errorBuilder.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
             }
@@ -306,7 +306,8 @@ internal class EncryptedStream : Stream
         int totalRead = 0;
         while (totalRead < buffer.Length)
         {
-            int bytesRead = await stream.ReadAsync(buffer, totalRead, buffer.Length - totalRead, cancellationToken);
+            int bytesRead = await stream.ReadAsync(
+                buffer.AsMemory(totalRead, buffer.Length - totalRead), cancellationToken);
             if (bytesRead == 0)
             {
                 throw new EndOfStreamException("Connection closed unexpectedly");

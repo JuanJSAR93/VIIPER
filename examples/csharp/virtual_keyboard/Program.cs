@@ -79,7 +79,7 @@ async Task Cleanup()
 device.OnOutput = async stream =>
 {
     var buf = new byte[Keyboard.OutputSize];
-    await stream.ReadAsync(buf, 0, buf.Length);
+    await stream.ReadExactlyAsync(buf);
     byte leds = buf[0];
     Console.WriteLine($"→ LEDs: Num={(leds & (byte)LED.NumLock) != 0} Caps={(leds & (byte)LED.CapsLock) != 0} Scroll={(leds & (byte)LED.ScrollLock) != 0} Compose={(leds & (byte)LED.Compose) != 0} Kana={(leds & (byte)LED.Kana) != 0}");
 };

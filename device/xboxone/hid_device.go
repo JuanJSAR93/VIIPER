@@ -39,7 +39,7 @@ type XboxOneHID struct {
 	deviceType string
 }
 
-// New creates the Xbox One HID-compatible profile. The same implementation
+// NewHID creates the Xbox One HID-compatible profile. The same implementation
 // also serves Xbox Series X|S with a different PID/product string.
 func NewHID(o *device.CreateOptions, profile string) (*XboxOneHID, error) {
 	if profile != profileXboxOne && profile != profileXboxSeries {

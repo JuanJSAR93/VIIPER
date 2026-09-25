@@ -88,13 +88,14 @@ func (e *xboxOneLibraryExecutor) emit(execution xboxone.ControllerPersonaLocalEx
 	if callback == nil || stopped {
 		return
 	}
-	if execution.Action == xboxone.ControllerPersonaApplyDirectMotor {
+	switch execution.Action {
+	case xboxone.ControllerPersonaApplyDirectMotor:
 		m := execution.DirectMotor
 		C.viiper_call_xboxone_output(callback, handle, C.uint8_t(execution.Action),
 			C.uint8_t(m.LeftImpulse), C.uint8_t(m.RightImpulse),
 			C.uint8_t(m.LeftVibration), C.uint8_t(m.RightVibration),
 			C.uint8_t(m.Duration), C.uint8_t(m.Delay), C.uint8_t(m.Repeat), 0, 0)
-	} else if execution.Action == xboxone.ControllerPersonaApplyGuideLED {
+	case xboxone.ControllerPersonaApplyGuideLED:
 		led := execution.GuideLED
 		C.viiper_call_xboxone_output(callback, handle, C.uint8_t(execution.Action),
 			0, 0, 0, 0, 0, 0, 0, C.uint8_t(led.Pattern), C.uint8_t(led.Intensity))

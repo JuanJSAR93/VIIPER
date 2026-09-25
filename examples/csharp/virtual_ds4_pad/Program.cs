@@ -63,7 +63,7 @@ async Task Cleanup()
 device.OnOutput = async stream =>
 {
     var buf = new byte[Dualshock4.OutputSize];
-    await stream.ReadAsync(buf, 0, buf.Length);
+    await stream.ReadExactlyAsync(buf);
     byte rumbleSmall = buf[0];
     byte rumbleLarge = buf[1];
     byte ledRed      = buf[2];

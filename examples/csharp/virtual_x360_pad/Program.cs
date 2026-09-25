@@ -63,7 +63,7 @@ async Task Cleanup()
 device.OnOutput = async stream =>
 {
     var buf = new byte[Xbox360.OutputSize];
-    await stream.ReadAsync(buf, 0, buf.Length);
+    await stream.ReadExactlyAsync(buf);
     byte left = buf[0]; 
     byte right = buf[1];
     Console.WriteLine($"← Rumble: Left={left}, Right={right}");

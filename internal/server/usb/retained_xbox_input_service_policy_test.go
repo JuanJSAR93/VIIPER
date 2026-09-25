@@ -68,12 +68,9 @@ func TestRetainedXboxInputServicePolicyDeliversDistinctJournalStates(t *testing.
 			_, status, actual, _ := readRetainedSubmitResponseForDirection(t, client, usbip.DirOut)
 			require.Zero(t, status)
 			require.EqualValues(t, len(probe), actual)
-			start := []byte{0x05, 0x20, 0x03, 0x01, byte(xboxone.SetDeviceStateStart)}
-			writeRetainedSubmit(t, client, 304, usbip.DirOut, 1, uint32(len(start)), [8]byte{}, start)
-			_, status, actual, _ = readRetainedSubmitResponseForDirection(t, client, usbip.DirOut)
-			require.Zero(t, status)
-			require.EqualValues(t, len(start), actual)
-			writeRetainedSubmit(t, client, 305, usbip.DirIn, 1, 64, [8]byte{}, nil)
+			// The extended initialization frame is the Xbox One/Series START
+			// variant, so the next request is the first status response.
+			writeRetainedSubmit(t, client, 304, usbip.DirIn, 1, 64, [8]byte{}, nil)
 			_, status, _, payload = readRetainedSubmitResponse(t, client)
 			require.Zero(t, status)
 			_, _, err = xboxone.DecodeExtendedStatusNoEventsMessage(payload)

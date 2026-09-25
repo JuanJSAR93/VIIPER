@@ -74,7 +74,7 @@ type xboxOneActivationResponse struct {
 // the hosting process, which keeps the main VIIPER binary usable as a server.
 func (c *XboxOneClient) Run() error {
 	if c == nil {
-		return errors.New("Xbox One client configuration is nil")
+		return errors.New("xbox one client configuration is nil")
 	}
 	if strings.TrimSpace(c.KeyFile) == "" {
 		return errors.New("--key-file is required")
@@ -178,7 +178,7 @@ func (c *XboxOneClient) Run() error {
 		BusID: bus.BusID, DevID: created.DevID, Removal: created.Removal,
 		USBIPBusID: created.USBIPBusID, RemoveMs: created.RemoveMs,
 	}
-	fmt.Printf("persona creada: bus=%d dev=%s vid=%04X pid=%04X producto=%q deviceID=%016X serial=%s usbip=%s\n",
+	fmt.Printf("persona creada: bus=%d dev=%s vid=%04X pid=%04X product=%q deviceID=%016X serial=%s usbip=%s\n",
 		reg.BusID, reg.DevID, vendorID, productID, create.Strings.Product,
 		create.Identity.DeviceID, create.Strings.Serial, reg.USBIPBusID)
 
@@ -574,7 +574,7 @@ func (c *xboxOneAPIClient) request(ctx context.Context, path, payload string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	command := path
 	if payload != "" {
 		command += " " + payload

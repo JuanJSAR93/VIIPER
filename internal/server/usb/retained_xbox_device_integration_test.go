@@ -219,21 +219,13 @@ func testAuthorizedXboxProductionRetainedImport(t *testing.T, earlyHostCommand b
 			sequence, status, actual, payload)
 	}
 
-	startWire := []byte{0x05, 0x20, 0x03, 0x01,
-		byte(xboxone.SetDeviceStateStart)}
-	writeRetainedSubmit(t, clientConn, 307, usbip.DirOut, 1,
-		uint32(len(startWire)), [8]byte{}, startWire)
-	sequence, status, actual, payload = readRetainedSubmitResponseForDirection(
-		t, clientConn, usbip.DirOut)
-	if sequence != 307 || status != 0 || actual != uint32(len(startWire)) ||
-		len(payload) != 0 {
-		t.Fatalf("START response = seq=%d status=%d actual=%d payload=% x",
-			sequence, status, actual, payload)
-	}
-
-	writeRetainedSubmit(t, clientConn, 308, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	// The extended initialization frame above is the Xbox One/Series START
+	// variant. It already schedules status, initial input, and normal-upstream
+	// permission; do not send a second ordinary START while that transition is
+	// pending, because the first IN must be admitted before the next host lane.
+	writeRetainedSubmit(t, clientConn, 307, usbip.DirIn, 1, 64, [8]byte{}, nil)
 	sequence, status, actual, payload = readRetainedSubmitResponse(t, clientConn)
-	if sequence != 308 || status != 0 || actual == 0 {
+	if sequence != 307 || status != 0 || actual == 0 {
 		t.Fatalf("status response = seq=%d status=%d actual=%d payload=% x",
 			sequence, status, actual, payload)
 	}
