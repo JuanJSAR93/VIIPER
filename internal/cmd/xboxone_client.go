@@ -42,6 +42,7 @@ type XboxOneClient struct {
 	DynamicPattern      string `help:"send a timed GIP pattern: a-pulse,dpad-pulse,trigger-ramp,stick-sweep,mixed"`
 	DynamicPatternSecs  int    `help:"duration of the timed GIP pattern in seconds" default:"8"`
 	DynamicPatternDelay int    `help:"seconds to wait before the first timed GIP state" default:"0"`
+	Transport           string `help:"Xbox lifecycle policy" enum:"broker,simple" default:"broker"`
 	BusID               uint   `help:"use an existing VIIPER bus instead of creating a new one"`
 	Profile             string `help:"Xbox identity profile" enum:"xboxone,xboxseries" default:"xboxone"`
 }
@@ -158,6 +159,7 @@ func (c *XboxOneClient) Run() error {
 			TransportGeneration: 1, OwnershipEpoch: 1,
 			TimeToLiveMicroseconds: 250000,
 		},
+		Transport:      strings.ToLower(strings.TrimSpace(c.Transport)),
 		ImportDeviceID: importDeviceID, LocalTimeoutMilliseconds: 100,
 	}
 	createRaw, err := json.Marshal(create)

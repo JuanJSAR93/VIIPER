@@ -43,10 +43,14 @@ type ProductionRetainedUSBDeviceOptions struct {
 	Strings               ControllerUSBIdentityStrings
 	IdentityAuthorization ControllerIdentityAuthorizationDecision
 	FeedbackBinding       ControllerPersonaFeedbackBindingV1
-	ProtocolTimeMS        uint64
-	AuthorityID           uint64
-	ImportDeviceID        uint64
-	LocalTimeout          time.Duration
+	// KeepUSBIPOnFeedbackFailure enables the first safe simple-transport
+	// policy: feedback failure retires only the feedback lane and leaves the
+	// enumerated USB/IP persona alive after neutralizing its input.
+	KeepUSBIPOnFeedbackFailure bool
+	ProtocolTimeMS             uint64
+	AuthorityID                uint64
+	ImportDeviceID             uint64
+	LocalTimeout               time.Duration
 }
 
 // ProductionRetainedUSBPreparation is a one-use, pointer-owned composition
@@ -54,17 +58,18 @@ type ProductionRetainedUSBDeviceOptions struct {
 // identity authorization. The internal registry alone invokes the canonical
 // device constructor and then binds this exact executor/bridge pair.
 type ProductionRetainedUSBPreparation struct {
-	mu             sync.Mutex
-	authorization  AuthorizedControllerPersonaConfig
-	executor       *ControllerPersonaCanonicalFeedbackExecutor
-	timedExecutor  *controllerPersonaTimedFeedbackExecutor
-	bridge         *controllerPersonaFeedbackStreamBridge
-	protocolTimeMS uint64
-	authorityID    uint64
-	importDeviceID uint64
-	localTimeout   time.Duration
-	attached       bool
-	removal        productionRemovalCapability
+	mu                         sync.Mutex
+	authorization              AuthorizedControllerPersonaConfig
+	executor                   *ControllerPersonaCanonicalFeedbackExecutor
+	timedExecutor              *controllerPersonaTimedFeedbackExecutor
+	bridge                     *controllerPersonaFeedbackStreamBridge
+	protocolTimeMS             uint64
+	authorityID                uint64
+	importDeviceID             uint64
+	localTimeout               time.Duration
+	keepUSBIPOnFeedbackFailure bool
+	attached                   bool
+	removal                    productionRemovalCapability
 }
 
 // controllerPersonaFeedbackStreamBridge is the exact synchronous acceptance
@@ -74,12 +79,13 @@ type ProductionRetainedUSBPreparation struct {
 // frame. A lost acknowledgement retires the broker session as ambiguous; the
 // retained persona's caller then quarantines that one-shot incarnation.
 type controllerPersonaFeedbackStreamBridge struct {
-	mu           sync.Mutex
-	revision     uint64
-	sessionToken uint64
-	ready        bool
-	pending      *controllerPersonaFeedbackDelivery
-	wake         chan struct{}
+	mu              sync.Mutex
+	revision        uint64
+	sessionToken    uint64
+	ready           bool
+	autoAcknowledge bool
+	pending         *controllerPersonaFeedbackDelivery
+	wake            chan struct{}
 }
 
 type controllerPersonaFeedbackDelivery struct {
@@ -93,8 +99,11 @@ type controllerPersonaBrokerStreamLease struct {
 	token  uint64
 }
 
-func newControllerPersonaFeedbackStreamBridge() *controllerPersonaFeedbackStreamBridge {
-	return &controllerPersonaFeedbackStreamBridge{wake: make(chan struct{}, 1)}
+func newControllerPersonaFeedbackStreamBridge(autoAcknowledge ...bool) *controllerPersonaFeedbackStreamBridge {
+	return &controllerPersonaFeedbackStreamBridge{
+		wake:            make(chan struct{}, 1),
+		autoAcknowledge: len(autoAcknowledge) > 0 && autoAcknowledge[0],
+	}
 }
 
 func (bridge *controllerPersonaFeedbackStreamBridge) PublishControllerFeedback(
@@ -205,6 +214,14 @@ func (bridge *controllerPersonaFeedbackStreamBridge) pendingAfter(
 		}
 		if bridge.pending != nil && bridge.pending.revision > after {
 			wire, revision := bridge.pending.wire, bridge.pending.revision
+			if bridge.autoAcknowledge {
+				// Simple transport considers delivery to the authenticated
+				// full-duplex stream sufficient. It does not wait for the
+				// external physical-feedback ACK used by broker mode.
+				pending := bridge.pending
+				bridge.pending = nil
+				pending.result <- nil
+			}
 			bridge.mu.Unlock()
 			return wire, revision, true
 		}
@@ -228,6 +245,11 @@ func (bridge *controllerPersonaFeedbackStreamBridge) acknowledge(
 		return ErrProductionBrokerUnavailable
 	}
 	bridge.mu.Lock()
+	if bridge.autoAcknowledge && bridge.ready &&
+		bridge.sessionToken == token {
+		bridge.mu.Unlock()
+		return nil
+	}
 	if !bridge.ready || bridge.sessionToken != token ||
 		bridge.pending == nil || bridge.pending.revision != revision {
 		bridge.mu.Unlock()
@@ -447,7 +469,8 @@ func PrepareProductionRetainedUSBDevice(
 	if err != nil {
 		return nil, err
 	}
-	bridge := newControllerPersonaFeedbackStreamBridge()
+	bridge := newControllerPersonaFeedbackStreamBridge(
+		options.KeepUSBIPOnFeedbackFailure)
 	executor, err := NewControllerPersonaCanonicalFeedbackExecutor(
 		options.FeedbackBinding, bridge)
 	if err != nil {
@@ -463,6 +486,7 @@ func PrepareProductionRetainedUSBDevice(
 		protocolTimeMS: options.ProtocolTimeMS,
 		authorityID:    options.AuthorityID, importDeviceID: options.ImportDeviceID,
 		localTimeout: options.LocalTimeout, removal: removal,
+		keepUSBIPOnFeedbackFailure: options.KeepUSBIPOnFeedbackFailure,
 	}, nil
 }
 
@@ -512,15 +536,17 @@ func (preparation *ProductionRetainedUSBPreparation) AttachConstructed(
 	}
 	device.feedbackBridge = preparation.bridge
 	device.removal = preparation.removal
+	device.keepUSBIPOnFeedbackFailure = preparation.keepUSBIPOnFeedbackFailure
 	preparation.timedExecutor.onFailure = device.failTimedFeedback
 	device.brokerInputRevision = 1
 	preparation.attached = true
 	return nil
 }
 
-// failTimedFeedback records asynchronous renewal failure at the retained
-// owner's existing fatal edge and wakes the broker writer. It never drains
-// synchronously: the failing publication still owns the executor operation.
+// failTimedFeedback records asynchronous renewal failure and wakes the broker
+// writer. The default broker policy quarantines the one-shot persona; the
+// simple policy retires only feedback after publishing neutral input. It never
+// drains synchronously: the failing publication still owns the operation.
 func (device *AuthorizedDormantRetainedUSBDevice) failTimedFeedback(err error) {
 	device.brokerMu.Lock()
 	token := device.brokerStreamToken
@@ -531,6 +557,23 @@ func (device *AuthorizedDormantRetainedUSBDevice) failTimedFeedback(err error) {
 	device.brokerStreamActive = false
 	device.brokerConsumerReady = false
 	device.brokerMu.Unlock()
-	device.adapter.markLocalFatal(err)
 	device.feedbackBridge.endSession(token, err)
+	if device.keepUSBIPOnFeedbackFailure {
+		var neutral [SemanticInputWireSize]byte
+		if encodeErr := EncodeSemanticInputWireV1Into(neutral[:], InputStateV1{}); encodeErr == nil {
+			device.brokerMu.Lock()
+			revision := device.brokerInputRevision + 1
+			if device.brokerInputRevision != ^uint64(0) {
+				device.brokerInputRevision = revision
+			}
+			device.brokerMu.Unlock()
+			if revision != 0 && revision != ^uint64(0) {
+				if publishErr := device.PublishSemanticInputWire(revision, neutral[:]); publishErr != nil {
+					device.adapter.markLocalFatal(errors.Join(err, publishErr))
+				}
+			}
+			return
+		}
+	}
+	device.adapter.markLocalFatal(err)
 }

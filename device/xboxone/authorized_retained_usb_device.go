@@ -25,17 +25,18 @@ type AuthorizedDormantRetainedUSBDevice struct {
 	deviceID           uint64
 	primaryGIPDeviceID uint64
 
-	brokerMu            sync.Mutex
-	brokerStreamToken   uint64
-	brokerStreamActive  bool
-	brokerFailed        bool // permanent after input retirement or ambiguous/failed feedback
-	brokerInputRetired  bool // preserves only the original feedback consumer during teardown
-	brokerConsumerReady bool
-	brokerActivating    bool
-	brokerActivated     bool
-	brokerInputRevision uint64
-	feedbackBridge      *controllerPersonaFeedbackStreamBridge
-	removal             productionRemovalCapability
+	brokerMu                   sync.Mutex
+	brokerStreamToken          uint64
+	brokerStreamActive         bool
+	brokerFailed               bool // permanent after input retirement or ambiguous/failed feedback
+	brokerInputRetired         bool // preserves only the original feedback consumer during teardown
+	brokerConsumerReady        bool
+	brokerActivating           bool
+	brokerActivated            bool
+	brokerInputRevision        uint64
+	feedbackBridge             *controllerPersonaFeedbackStreamBridge
+	keepUSBIPOnFeedbackFailure bool
+	removal                    productionRemovalCapability
 }
 
 // NewAuthorizedDormantRetainedUSBDevice consumes the same one-shot external
@@ -211,10 +212,16 @@ func (device *AuthorizedDormantRetainedUSBDevice) GetDeviceSpecificArgs() map[st
 	if device == nil {
 		return nil
 	}
-	return map[string]any{
+	args := map[string]any{
 		"retainedUSB": true,
 		"deviceID":    device.deviceID,
 	}
+	if device.keepUSBIPOnFeedbackFailure {
+		args["transport"] = "simple"
+	} else {
+		args["transport"] = "broker"
+	}
+	return args
 }
 
 // VIIPERDeviceType selects the production Xbox stream handler without adding

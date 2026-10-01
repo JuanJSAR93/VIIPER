@@ -62,6 +62,11 @@ func BusDeviceAddAuthorizedXboxOne(
 			return apierror.ErrBadRequest(fmt.Sprintf(
 				"unsupported Xbox One factory version: %d", create.Version))
 		}
+		transport := strings.ToLower(strings.TrimSpace(create.Transport))
+		if transport != "" && transport != "broker" && transport != "simple" {
+			return apierror.ErrBadRequest(fmt.Sprintf(
+				"unsupported Xbox One transport: %s", create.Transport))
+		}
 		if !create.IdentityAuthorizationGranted {
 			return apierror.ErrBadRequest(
 				"Xbox One external identity authorization was not granted")
@@ -116,9 +121,10 @@ func BusDeviceAddAuthorizedXboxOne(
 						OwnershipEpoch:         create.Feedback.OwnershipEpoch,
 						TimeToLiveMicroseconds: create.Feedback.TimeToLiveMicroseconds,
 					},
-					ProtocolTimeMS: protocolTime / 1_000,
-					AuthorityID:    authorityID,
-					ImportDeviceID: create.ImportDeviceID,
+					KeepUSBIPOnFeedbackFailure: transport == "simple",
+					ProtocolTimeMS:             protocolTime / 1_000,
+					AuthorityID:                authorityID,
+					ImportDeviceID:             create.ImportDeviceID,
 					LocalTimeout: time.Duration(
 						create.LocalTimeoutMilliseconds) * time.Millisecond,
 				},

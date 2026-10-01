@@ -166,13 +166,17 @@ type XboxOneAuthorizedCreateRequestV1 struct {
 	// BaseGamepadMetadata selects the 18-byte standard GIP gamepad input
 	// report used by xone and the Windows XboxComposite path. The legacy
 	// Console Function Map shape remains the default for older callers.
-	BaseGamepadMetadata      bool                        `json:"baseGamepadMetadata,omitempty"`
-	Identity                 XboxOneAuthorizedIdentityV1 `json:"identity"`
-	USB                      XboxOneAuthorizedUSBV1      `json:"usb"`
-	Strings                  XboxOneAuthorizedStringsV1  `json:"strings"`
-	Feedback                 XboxOneAuthorizedFeedbackV1 `json:"feedback"`
-	ImportDeviceID           uint64                      `json:"importDeviceId"`
-	LocalTimeoutMilliseconds uint32                      `json:"localTimeoutMilliseconds"`
+	BaseGamepadMetadata bool                        `json:"baseGamepadMetadata,omitempty"`
+	Identity            XboxOneAuthorizedIdentityV1 `json:"identity"`
+	USB                 XboxOneAuthorizedUSBV1      `json:"usb"`
+	Strings             XboxOneAuthorizedStringsV1  `json:"strings"`
+	Feedback            XboxOneAuthorizedFeedbackV1 `json:"feedback"`
+	// Transport selects the Xbox feedback/lifecycle policy. Empty and broker
+	// preserve the existing fail-closed broker behavior; simple keeps the
+	// USB/IP persona alive after an ambiguous feedback failure.
+	Transport                string `json:"transport,omitempty"`
+	ImportDeviceID           uint64 `json:"importDeviceId"`
+	LocalTimeoutMilliseconds uint32 `json:"localTimeoutMilliseconds"`
 }
 
 // UnmarshalJSON implements custom unmarshaling to accept both uint16 and hex string formats
