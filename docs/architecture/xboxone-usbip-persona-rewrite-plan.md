@@ -13,6 +13,313 @@ La nueva implementación conservará USB/IP como transporte y añadirá dos perf
 
 La referencia de HIDMaestro se utilizará para estudiar descriptores, reportes, identidad y ciclo de vida, pero no se incorporará su driver UMDF2 ni se sustituirá el modelo USB/IP de VIIPER.
 
+## Estado actual tras la implementación
+
+La reescritura ya creó dos dispositivos nativos independientes siguiendo los
+patrones de `device/xbox360`, `device/dualshock4`, `device/dualsense` y
+`device/ns2pro`:
+
+La reconstrucción empezará con dos paquetes independientes, equivalentes a los
+demás dispositivos nativos:
+
+```text
+device/xboxone/
+    const.go
+    state.go
+    descriptor.go
+    device.go
+    handler.go
+    xboxone_test.go
+
+device/xboxseries/
+    const.go
+    state.go
+    descriptor.go
+    device.go
+    handler.go
+    xboxseries_test.go
+```
+
+Cada paquete tendrá un único perfil físico y una identidad propia. No habrá un
+`profile string` que cambie internamente entre dos mandos ni un catálogo
+auxiliar para decidir qué implementación crear.
+
+No se conserva ningún motor GIP retenido ni una ruta de broker especial. Las
+APIs históricas de Xbox One fueron retiradas para que estos perfiles utilicen
+exclusivamente el registro y stream genéricos de VIIPER.
+
+La frontera de cada paquete será la misma que en los dispositivos nativos:
+constructor `New`, descriptor USB, estado semántico, handler de stream,
+callbacks de salida y pruebas de integración USB/IP.
+
+## Patrones de los dispositivos existentes que se deben seguir
+
+### Xbox 360
+
+Se usará como referencia principal para la forma de un dispositivo Xbox en
+VIIPER:
+
+- `New(*device.CreateOptions)` como constructor.
+- `usb.Device` como interfaz de transporte.
+- `usb.Descriptor` propio del dispositivo.
+- `api.RegisterDevice("xbox360", ...)` desde `handler.go`.
+- Stream de entrada con un productor exclusivo.
+- Callback de vibración hacia el cliente.
+- Scheduler de reportes con estado neutral y manejo de overflow.
+- Pruebas reales de descriptor, entrada y salida sobre USB/IP.
+
+### DualShock 4 y DualSense
+
+Se tomarán como referencia para:
+
+- Separar `descriptor.go`, `device.go`, `handler.go` y `state.go`.
+- Mantener el estado semántico independiente del reporte físico.
+- Registrar callbacks de salida con generación/propietario.
+- Reproducir el último estado de salida al conectar el callback.
+- Liberar callbacks de forma condicional para no borrar el callback de otra
+  conexión.
+- Manejar seriales y múltiples instancias.
+- Mantener el transporte de entrada y salida en el mismo stream.
+
+### Switch 2 Pro
+
+Se tomará como referencia para:
+
+- Descriptores en un archivo dedicado.
+- Estados de runtime y metadata separados.
+- Reportes HID secuenciados.
+- Handshake/control HID cuando Windows o el consumidor lo solicite.
+- Pruebas de `joy.cpl`, reportes y protocolo de salida.
+
+## Qué se toma de HIDMaestro
+
+HIDMaestro será únicamente una guía de conformidad Windows:
+
+- Descriptor HID Xbox One original.
+- Descriptor HID Xbox Series USB.
+- Orden de botones y ejes.
+- Triggers separados.
+- Reporte Xbox/GIP de entrada.
+- Perfil de producto y fabricante.
+- Reglas para conservar identidad, serial y ContainerId cuando sea posible.
+- Pruebas contra XInput, DirectInput y GameInput.
+
+No se copiarán su SDK, su driver UMDF2, `SwDeviceCreate`, su companion XUSB
+ni su memoria compartida. La ruta de VIIPER seguirá siendo:
+
+```text
+cliente VIIPER
+    -> stream genérico del dispositivo
+    -> USB/IP server
+    -> usbip-win2 / VHCI
+    -> HIDClass / APIs de Windows
+```
+
+## Identidad visible de VIIPER
+
+Al igual que los dispositivos existentes, la persona tendrá strings visibles
+propias de VIIPER. El descriptor no intentará ocultar que es virtual:
+
+```text
+Manufacturer: ©Microsoft Corporation
+Xbox One:     VIIPER Xbox One Controller
+Series:       VIIPER Xbox Series X|S Controller
+```
+
+La metadata interna y el reporte de pruebas conservarán además:
+
+```text
+backend: usbip
+profile: xbox-one-original | xbox-series-xs
+virtual: true
+source: viiper
+```
+
+La detección recomendada será por la combinación de:
+
+- `Product`.
+- `BusReportedDeviceDesc`.
+- Fabricante.
+- Propiedades PnP.
+- Padre y servicio, cuando existan.
+
+VID/PID no será la única señal. El producto visible no debe ser únicamente
+`Controller`, porque perderíamos la diferenciación que ya existe en Xbox 360,
+DS4, DS5 y NS2P.
+
+## Dos dispositivos nativos, no un catálogo HID auxiliar
+
+La integración se hará dentro de cada paquete mediante `handler.go`, igual que
+Xbox 360, DS4, DualSense y NS2P. Cada paquete registrará su propio tipo desde
+`init()`:
+
+```text
+xboxone
+xboxseries
+```
+
+No se utiliza `internal/devicecatalog/xboxonehid.go`. Fue eliminado; el
+catálogo importa directamente `device/xboxone` y `device/xboxseries`, cuyos
+`handler.go` se registran por separado.
+
+Cada paquete tendrá su propio handler:
+
+```go
+// device/xboxone/handler.go
+func init() {
+    api.RegisterDevice("xboxone", &handler{})
+}
+
+func (h *handler) CreateDevice(o *device.CreateOptions) (usb.Device, error)
+func (h *handler) StreamHandler() api.StreamHandlerFunc
+func (h *handler) UpdateMetaState(meta string, dev *usb.Device) error
+```
+
+```go
+// device/xboxseries/handler.go
+func init() {
+    api.RegisterDevice("xboxseries", &handler{})
+}
+```
+
+El código de empaquetado puede compartir utilidades internas si resulta
+necesario, pero las decisiones de identidad, descriptor y estado permanecerán
+en el paquete correspondiente. El objetivo es que cada mando sea extensible y
+testeable como un dispositivo normal de VIIPER.
+
+## Correspondencia de archivos
+
+La librería C/Go de VIIPER también tendrá una entrada específica por mando:
+
+```text
+lib/viiper/xboxone.go
+lib/viiper/xboxseries.go
+```
+
+Cada archivo expondrá el constructor y callback del mando correspondiente,
+siguiendo el patrón de `xbox360.go`, `dualshock4.go`, `dualsense.go` y
+`ns2pro.go`.
+
+No habrá un único `lib/viiper/xboxone.go` con un parámetro genérico para
+seleccionar Series. La separación facilita:
+
+- ABI y nombres de tipos claros.
+- Documentación independiente.
+- Reportes separados.
+- Pruebas separadas.
+- Evolución independiente del descriptor.
+- Compatibilidad futura con revisiones de hardware.
+
+## Estado y stream unificados
+
+El nuevo dispositivo utilizará un único estado semántico común:
+
+```go
+type InputState struct {
+    Buttons      uint16
+    LeftTrigger  uint16
+    RightTrigger uint16
+    LeftStickX   int16
+    LeftStickY   int16
+    RightStickX  int16
+    RightStickY  int16
+}
+```
+
+La conversión será:
+
+```text
+InputState
+    -> Xbox One/Series HID input report
+    -> USB/IP interrupt IN
+```
+
+La salida seguirá el patrón Xbox 360/DS4:
+
+```text
+USB/IP interrupt OUT
+    -> decoder de vibración
+    -> OutputState
+    -> stream del cliente
+```
+
+No habrá un broker especial ni un cliente ejecutable separado.
+
+## Secuencia de implementación completada
+
+1. Crear `device/xboxone` y `device/xboxseries` como paquetes independientes.
+2. Crear un descriptor HID dedicado para cada paquete.
+3. Añadir `045E:02D1` al paquete Xbox One y `045E:0B12` al paquete Xbox Series.
+4. Crear `device.go` en ambos paquetes con constructor, estado neutral y
+   scheduler.
+5. Crear `handler.go` en ambos paquetes y registrar `xboxone` y `xboxseries`.
+6. Crear los encoders de reportes de entrada basados en la guía de HIDMaestro.
+7. Crear los decoders de salida para motores izquierdo y derecho.
+8. Implementar GET_DESCRIPTOR, GET_REPORT y SET_REPORT según lo requiera
+    usbip-win2/HIDClass.
+9. Añadir las identidades `VIIPER Xbox One Controller` y
+    `VIIPER Xbox Series X|S Controller`.
+10. Eliminar `internal/devicecatalog/xboxonehid.go` y registrar los dos
+    paquetes desde `devices.go`.
+11. Añadir las superficies de librería en `lib/viiper/xboxone.go` y
+    `lib/viiper/xboxseries.go`.
+12. Retirar la ruta GIP retenida, el cliente Xbox One antiguo y sus endpoints
+    de autorización especiales.
+13. Añadir pruebas unitarias de identidad, estado HID, entrada y vibración.
+14. Compilar el binario principal y ejecutar la suite completa.
+15. Compilar y probar Xbox Series X/S.
+16. Validar joy.cpl, DirectInput, vibración y reconexión por separado.
+
+## Criterio de migración de los imports actuales
+
+Los imports actuales de `device/xboxone` se clasificarán así:
+
+| Área | Acción |
+|---|---|
+| `internal/devicecatalog/xboxonehid.go` | Eliminado; ya no hay catálogo Xbox auxiliar |
+| `device/xboxone` | Dispositivo nativo Xbox One implementado |
+| `device/xboxseries` | Dispositivo nativo Xbox Series implementado |
+| `lib/viiper/xboxone.go` | API nativa Xbox One HID/USB/IP |
+| `lib/viiper/xboxseries.go` | API nativa Xbox Series implementada |
+| `internal/server/api` | Stream y creación genéricos; sin endpoints Xbox especiales |
+| `internal/registry` | Registro genérico; sin fábrica Xbox retenida |
+| pruebas GIP/retained Xbox | Eliminadas por pertenecer al transporte retirado |
+| scripts Python antiguos | Reescribir para los nuevos tipos genéricos |
+
+No se mantiene un cliente ejecutable paralelo. La ruta pública nueva tiene la
+misma forma que los otros mandos de `device/`.
+
+## Convención de identidad VIIPER
+
+Los demás mandos virtuales de VIIPER ya exponen una identidad visible propia
+en sus strings USB. No ocultan el origen virtual cambiando únicamente el VID o
+PID. Por ejemplo, las personas existentes utilizan productos como:
+
+```text
+VIIPER Xbox 360 Controller
+VIIPER DualShock 4 Controller
+VIIPER DualSense Wireless Controller
+VIIPER Switch 2 Pro Controller
+```
+
+La reescritura Xbox seguirá la misma convención. Los valores iniciales serán:
+
+```text
+Manufacturer: Microsoft
+Product One:  VIIPER Xbox One Controller
+Product Series: VIIPER Xbox Series X|S Controller
+```
+
+Así se conservan VID/PID, descriptor y comportamiento esperado por Windows,
+pero la detección de VIIPER puede realizarse de forma clara mediante el
+producto, `BusReportedDeviceDesc` y las propiedades PnP relacionadas. No se
+usará únicamente VID/PID para distinguir un mando físico de uno virtual.
+
+El texto `VIIPER` debe estar en el descriptor de strings USB y, cuando Windows
+lo materialice, debe quedar reflejado en las propiedades de dispositivo. La
+implementación debe añadir pruebas que comprueben tanto `Product` como
+`BusReportedDeviceDesc` después del attach real mediante usbip-win2.
+
 ## Resultado esperado
 
 Cada perfil debe poder:
@@ -89,16 +396,16 @@ Esos elementos pertenecen a una arquitectura diferente y no deben mezclarse con 
 Aplicación VIIPER
        |
        v
-lib/viiper/xboxone.go
+lib/viiper/xboxone.go       lib/viiper/xboxseries.go
        |
-       v
-Persona Xbox One/Series
+       +-----------------------------+
+       |                             |
+       v                             v
+device/xboxone                  device/xboxseries
        |
-       +--> Descriptor USB
-       +--> Descriptor HID
-       +--> Reportes de entrada
-       +--> Reportes de salida
-       +--> Metadatos e identidad
+       +--> Descriptor USB/HID      +--> Descriptor USB/HID
+       +--> Input/Output             +--> Input/Output
+       +--> Metadata                 +--> Metadata
        |
        v
 USB/IP server
@@ -112,25 +419,23 @@ Windows HID / XInput / DirectInput
 
 La persona Xbox debe comportarse como las demás personas de VIIPER: crear una especificación de dispositivo, registrarla en el bus virtual y publicar reportes a través del canal unificado.
 
-## Fase 1: aislar la implementación antigua
+## Fase 1: limpieza y reconstrucción desde cero
 
-Antes de modificar código:
+Se retiró el comando monolítico `viiper.exe xboxone-client`, junto con
+`internal/cmd/xboxone_client.go` y su registro en `internal/config/config.go`.
+Los scripts de prueba nuevos crean `xboxone` o `xboxseries` mediante la API
+genérica y abren el stream normal `bus/{busId}/{devId}`.
 
-- Identificar todas las rutas actuales de `xboxone-client`.
-- Separar broker, cliente de pruebas y persona USB.
-- Mantener el código actual disponible detrás de una opción de compatibilidad.
-- Evitar cambios en Xbox 360, DS4, DS5 y NS2P.
-- Registrar qué partes actuales dependen de GIP, CFBK y `stream-authorized-xboxone`.
-
-Opciones previstas:
+La nueva implementación no tendrá una opción `legacy` ni un cliente paralelo.
+Los nombres de perfil serán:
 
 ```text
-profile=xbox-one-original
-profile=xbox-series-xs
-legacy=true|false
+device type: xboxone
+device type: xboxseries
 ```
 
-La nueva persona será la opción predeterminada únicamente después de superar las pruebas de regresión.
+La reconstrucción se hará siguiendo los dispositivos nativos existentes y se
+mantendrán intactos Xbox 360, DS4, DS5 y NS2P.
 
 ## Fase 2: modelo declarativo de perfiles
 

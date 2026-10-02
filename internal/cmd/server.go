@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Alia5/VIIPER/device/xboxone"
 	"github.com/Alia5/VIIPER/internal/log"
 	"github.com/Alia5/VIIPER/internal/server/api"
 	"github.com/Alia5/VIIPER/internal/server/api/handler"
@@ -122,7 +121,6 @@ func (s *Server) startServer(
 			}
 
 			apiSrv := api.New(usbSrv, s.APIServerConfig.Addr, s.APIServerConfig, logger)
-			api.RegisterStreamHandler("xboxone", xboxone.ProductionStreamHandler)
 			r := apiSrv.Router()
 			r.Register("ping", handler.Ping())
 			r.Register("server/status", handler.ServerStatus(usbSrv, apiSrv))
@@ -137,20 +135,12 @@ func (s *Server) startServer(
 			r.Register("bus/remove", handler.BusRemove(usbSrv))
 			r.Register("bus/{id}/list", handler.BusDevicesList(usbSrv))
 			r.Register("bus/{id}/add", handler.BusDeviceAdd(usbSrv, apiSrv))
-			r.Register("bus/{id}/add-authorized-xboxone",
-				handler.BusDeviceAddAuthorizedXboxOne(usbSrv, apiSrv))
-			r.Register("bus/{busId}/{devId}/activate-authorized-xboxone",
-				handler.BusDeviceActivateAuthorizedXboxOne(usbSrv, apiSrv))
-			r.Register("bus/{busId}/{devId}/remove-authorized-xboxone",
-				handler.BusDeviceRemoveAuthorizedXboxOne(usbSrv))
 			r.Register("bus/{id}/remove", handler.BusDeviceRemove(usbSrv))
 			r.Register("bus/{busId}/{devId}/microphone-interface",
 				handler.BusDeviceMicrophoneInterfaceStatus(usbSrv))
 			r.Register("bus/{busId}/{devId}/ns2pro-status-v1",
 				handler.BusDeviceNS2ProRuntimeStatusV1(usbSrv))
 			r.RegisterStream("bus/{busId}/{deviceid}", api.DeviceStreamHandler(usbSrv))
-			r.RegisterStream("bus/{busId}/{deviceid}/stream-authorized-xboxone", api.DeviceStreamHandler(usbSrv))
-
 			if s.APIServerConfig.AutoAttachLocalClient {
 				logger.Info("Auto-attach is enabled, checking prerequisites...")
 				if !api.CheckAutoAttachPrerequisites(s.APIServerConfig.AutoAttachWindowsNative, logger) {

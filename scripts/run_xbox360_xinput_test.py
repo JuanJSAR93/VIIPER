@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from run_xbox_gip_joy_test import xinput_slots
+from xinput_probe import xinput_slots
 
 
 ROOT = Path(__file__).resolve().parents[1]

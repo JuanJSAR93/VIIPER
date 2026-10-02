@@ -6,10 +6,9 @@ opens the real VIIPER input streams, sends neutral/press/release states for
 every exposed button plus analog controls, attaches each device through
 usbip-win2, and shuts the server down through server/shutdown.
 
-Xbox One/Series is included on that same bus through VIIPER's authenticated
-retained-registration API. Its protected USB/IP alias remains distinct from
-the numeric bus/device address. Use --skip-xboxone only when the native attach
-prerequisite is unavailable and the generic matrix must still be collected.
+Xbox One/Series is included on that same bus through the generic native device
+registry. Use --skip-xboxone only when the USB/IP attach prerequisite is
+unavailable and the generic matrix must still be collected.
 """
 
 from __future__ import annotations
@@ -68,15 +67,15 @@ PROFILE_INFO = {
         "manufacturer": "©Microsoft Corporation",
         "product": "VIIPER Xbox One Controller",
         "vid": "0x045e",
-        "pid": "0x02ea",
-        "uid": "dinámico; incluye DeviceID y serial retenido",
+        "pid": "0x02d1",
+        "uid": "VIIPER-XBOXONE-0001",
     },
     "xboxseries": {
         "manufacturer": "©Microsoft Corporation",
         "product": "VIIPER Xbox Series X|S Controller",
         "vid": "0x045e",
         "pid": "0x0b12",
-        "uid": "dinámico; incluye DeviceID y serial retenido",
+        "uid": "VIIPER-XBOXSERIES-0001",
     },
 }
 
@@ -100,26 +99,6 @@ def find_executable(explicit: str | None, names: list[Path | str]) -> Path:
         if found:
             return Path(found).resolve()
     die("No se encontró el ejecutable requerido")
-
-
-def resolve_xboxone_client(
-    args: argparse.Namespace, viiper: Path | None = None
-) -> tuple[Path, list[str]]:
-    """Resolve the integrated feeder, with legacy external-client support."""
-    if args.xboxone_client:
-        return find_executable(args.xboxone_client, [
-            ROOT / "viiper-xboxone-client.exe",
-            ROOT.parent / "lab" / "viiper-xboxone-client.exe",
-            "viiper-xboxone-client.exe",
-        ]), []
-    if viiper is None:
-        viiper = find_executable(args.viiper, [
-            ROOT / "viiper.exe",
-            ROOT.parents[2] / "outputs" / "viiper.exe",
-            ROOT.parent / "outputs" / "viiper.exe",
-            "viiper.exe",
-        ])
-    return viiper, ["xboxone-client"]
 
 
 def api_request(host: str, port: int, command: str, timeout: float = 5.0) -> dict:
@@ -186,6 +165,12 @@ def frame_ns2pro(buttons: int = 0, lx: int = 0x800, ly: int = 0x800,
                        ax, ay, az, gx, gy, gz)
 
 
+def frame_xboxone(buttons: int = 0, lt: int = 0, rt: int = 0,
+                  lx: int = 0, ly: int = 0, rx: int = 0,
+                  ry: int = 0) -> bytes:
+    return struct.pack("<HHHhhhh", buttons, lt, rt, lx, ly, rx, ry)
+
+
 def frame_dualsense_v5(payload: bytes, sequence: int) -> bytes:
     header_without_crc = struct.pack("<4sBBHI", b"VPCM", 5, 1,
                                      len(payload), sequence)
@@ -232,12 +217,23 @@ def button_frames(kind: str) -> list[tuple[str, bytes]]:
         ("GR", 1 << 18), ("GL", 1 << 19), ("C", 1 << 20),
         ("headset", 1 << 21),
     ]
-    values = {"xbox360": xbox, "dualshock4": ds4,
-              "dualsense": ds5, "ns2pro": ns2}[kind]
+    xboxone = [
+        ("dpad-up", 0x0001), ("dpad-down", 0x0002),
+        ("dpad-left", 0x0004), ("dpad-right", 0x0008),
+        ("menu", 0x0010), ("view", 0x0020),
+        ("left-stick", 0x0040), ("right-stick", 0x0080),
+        ("left-bumper", 0x0100), ("right-bumper", 0x0200),
+        ("guide", 0x0400), ("A", 0x0800), ("B", 0x1000),
+        ("X", 0x2000), ("Y", 0x4000), ("share", 0x8000),
+    ]
+    values = {"xbox360": xbox, "xboxone": xboxone, "xboxseries": xboxone,
+              "dualshock4": ds4, "dualsense": ds5, "ns2pro": ns2}[kind]
     result: list[tuple[str, bytes]] = []
     for name, mask in values:
         if kind == "xbox360":
             result.append((name, frame_xbox360(buttons=mask)))
+        elif kind in ("xboxone", "xboxseries"):
+            result.append((name, frame_xboxone(buttons=mask)))
         elif kind == "dualshock4":
             result.append((name, frame_ds4(buttons=mask)))
         elif kind == "dualsense":
@@ -256,6 +252,10 @@ def motion_frames(kind: str) -> list[tuple[str, bytes]]:
     if kind == "xbox360":
         return [("triggers-full", frame_xbox360(lt=255, rt=255)),
                 ("sticks-extremes", frame_xbox360(lx=32767, ly=-32768,
+                                                   rx=16384, ry=-16384))]
+    if kind in ("xboxone", "xboxseries"):
+        return [("triggers-full", frame_xboxone(lt=1023, rt=1023)),
+                ("sticks-extremes", frame_xboxone(lx=32767, ly=-32768,
                                                    rx=16384, ry=-16384))]
     if kind == "dualshock4":
         return [("triggers-full", frame_ds4(l2=255, r2=255)),
@@ -311,6 +311,8 @@ def send_sequence(kind: str, stream: socket.socket) -> tuple[int, list[dict]]:
 
     neutral = {
         "xbox360": frame_xbox360(),
+        "xboxone": frame_xboxone(),
+        "xboxseries": frame_xboxone(),
         "dualshock4": frame_ds4(),
         "dualsense": frame_dualsense(),
         "ns2pro": frame_ns2pro(),
@@ -435,9 +437,8 @@ def run_generic_matrix(args: argparse.Namespace, report: dict) -> int:
     ])
     report["viiper"] = str(viiper)
     report["usbip"] = str(usbip)
-    combined = not args.skip_xboxone
-    if combined and args.no_attach:
-        die("--no-attach no es compatible con Xbox One/Series; use --skip-xboxone")
+    include_xbox = not args.skip_xboxone
+    combined = False
     env = os.environ.copy()
     env["PATH"] = str(usbip.parent) + os.pathsep + env.get("PATH", "")
     server_args = [
@@ -446,11 +447,6 @@ def run_generic_matrix(args: argparse.Namespace, report: dict) -> int:
         "--api.addr=127.0.0.1:" + str(args.api_port),
         "--api.auto-attach-local-client=" + ("true" if combined else "false"),
     ]
-    if combined:
-        server_args.extend([
-            "--api.auto-attach-windows-native=false",
-            "--usb.retained-import-authority-id=1",
-        ])
     server = subprocess.Popen(server_args, env=env,
                               stdout=subprocess.DEVNULL,
                               stderr=subprocess.STDOUT)
@@ -476,6 +472,8 @@ def run_generic_matrix(args: argparse.Namespace, report: dict) -> int:
             ("dualsense", "dualsensegamepadv5"),
             ("ns2pro", "ns2pro"),
         ]
+        if include_xbox:
+            specs.append((args.xbox_profile, args.xbox_profile))
         before_ports = usbip_ports(usbip, args.usb_port)
         for label, device_type in specs:
             entry = {
@@ -548,9 +546,6 @@ def run_generic_matrix(args: argparse.Namespace, report: dict) -> int:
                 entry["error"] = str(error)
                 raise
 
-        if combined:
-            run_xboxone_client_on_server(args, report, args.api_port, bus_id,
-                                         viiper)
         return 0
     finally:
         for stream in streams:
@@ -578,251 +573,6 @@ def run_generic_matrix(args: argparse.Namespace, report: dict) -> int:
         print("[INFO] VIIPER cerrado mediante server/shutdown")
 
 
-def parse_xbox_client_tests(output: str) -> list[dict]:
-    tests: list[dict] = []
-    if "broker: estado neutral aceptado" in output:
-        tests.append({"name": "neutral", "phase": "neutral", "status": "PASS"})
-    for line in output.splitlines():
-        button = re.search(r"broker: button (.+) (pressed|released)", line)
-        if button:
-            tests.append({
-                "name": button.group(1),
-                "phase": "press" if button.group(2) == "pressed" else "release",
-                "status": "PASS",
-                "detail": line.strip(),
-            })
-        control = re.search(r"broker: control (.+) aceptado", line)
-        if control:
-            tests.append({"name": control.group(1), "phase": "motion",
-                          "status": "PASS", "detail": line.strip()})
-    return tests
-
-
-def run_xboxone_client_on_server(
-    args: argparse.Namespace, report: dict, api_port: int, bus_id: int,
-    viiper: Path,
-) -> None:
-    xbox_client, xbox_client_args = resolve_xboxone_client(args, viiper)
-    key_file = Path(os.environ.get("APPDATA", "")) / "VIIPER" / "viiper.key.txt"
-    if not key_file.is_file():
-        die(f"No se encontró la clave de VIIPER: {key_file}")
-
-    profile_key = args.xbox_profile
-    entry = {
-        "name": "Xbox One/Series",
-        "type": profile_key,
-        "result": "FAIL",
-        "tests": [],
-        "identity": dict(PROFILE_INFO[profile_key]),
-    }
-    report["controllers"].append(entry)
-    report["xboxoneClient"] = str(xbox_client)
-    report["xboxoneClientCommand"] = xbox_client_args or [str(xbox_client)]
-    client = subprocess.Popen(
-        [str(xbox_client), *xbox_client_args,
-         "--addr", f"127.0.0.1:{api_port}",
-         "--key-file", str(key_file), "--bus-id", str(bus_id),
-         "--profile", profile_key,
-         "--input-test", "--hold-seconds", "1"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
-    status = {}
-    best_status = {}
-    best_status_score = (-1, -1)
-    deadline = time.monotonic() + 60
-    while client.poll() is None and time.monotonic() < deadline:
-        try:
-            status = api_request("127.0.0.1", api_port, "server/status")
-            score = (status.get("activeStreams", 0),
-                     status.get("activeImports", 0))
-            if score > best_status_score:
-                best_status = status
-                best_status_score = score
-        except (OSError, RuntimeError, json.JSONDecodeError):
-            pass
-        time.sleep(0.1)
-    if client.poll() is None:
-        client.kill()
-        output, _ = client.communicate(timeout=5)
-        die("La prueba Xbox One/Series excedió 60 segundos:\n" + output)
-    output, _ = client.communicate(timeout=5)
-    output = output.strip()
-    entry["clientOutput"] = output
-    entry["tests"] = parse_xbox_client_tests(output)
-    entry["statusSnapshot"] = best_status or status
-    persona = re.search(
-        r'persona creada: bus=(\d+) dev=(\S+) vid=([0-9A-Fa-f]+) '
-        r'pid=([0-9A-Fa-f]+) producto="([^"]+)" '
-        r'deviceID=([0-9A-Fa-f]+) serial=(\S+) usbip=(\S+)', output)
-    if persona:
-        entry["identity"].update({
-            "busId": int(persona.group(1)),
-            "devId": persona.group(2),
-            "numericBusDevice": f"{persona.group(1)}-{persona.group(2)}",
-            "vid": "0x" + persona.group(3).lower(),
-            "pid": "0x" + persona.group(4).lower(),
-            "product": persona.group(5),
-            "description": persona.group(5),
-            "deviceID": "0x" + persona.group(6).lower(),
-            "serial": persona.group(7),
-            "uid": persona.group(7),
-            "usbipBusId": f"{persona.group(1)}-{persona.group(2)}",
-            "usbipExportAlias": persona.group(8),
-        })
-    attach = re.search(r"attach nativo aceptado: .* port=(\d+)", output)
-    if attach:
-        entry["identity"]["usbipPort"] = [int(attach.group(1))]
-    observed_status = best_status or status
-    live = find_status_device(observed_status, bus_id,
-                               entry["identity"].get("devId", ""))
-    entry["identity"].update({
-        "usbipImported": live.get("usbipImported", False),
-        "inputStreamActive": live.get("inputStreamActive", False),
-        "deviceSpecific": live.get("deviceSpecific", {}),
-    })
-    entry["result"] = "PASS" if (
-        client.returncode == 0 and entry["tests"] and
-        all(test.get("status") == "PASS" for test in entry["tests"])
-    ) else "FAIL"
-    if entry["result"] != "PASS":
-        die("La prueba Xbox One/Series falló:\n" + output)
-    print("[PASS] xboxone/xboxseries: matriz autenticada en el bus compartido")
-
-
-def run_xboxone_matrix(args: argparse.Namespace, report: dict) -> int:
-    """Run the retained, authenticated Xbox One/Series path in isolation."""
-    viiper = find_executable(args.viiper, [
-        ROOT / "viiper.exe",
-        ROOT.parents[2] / "outputs" / "viiper.exe",
-        ROOT.parent / "outputs" / "viiper.exe",
-        "viiper.exe",
-    ])
-    xbox_client, xbox_client_args = resolve_xboxone_client(args, viiper)
-    report["viiper"] = str(viiper)
-    report["xboxoneClient"] = str(xbox_client)
-    report["xboxoneClientCommand"] = xbox_client_args or [str(xbox_client)]
-    key_file = Path(os.environ.get("APPDATA", "")) / "VIIPER" / "viiper.key.txt"
-    if not key_file.is_file():
-        die(f"No se encontró la clave de VIIPER: {key_file}")
-
-    entry = {
-        "name": "Xbox One/Series",
-        "type": "xboxone",
-        "result": "FAIL",
-        "tests": [],
-        "identity": dict(PROFILE_INFO["xboxone"]),
-    }
-    report["controllers"].append(entry)
-
-    usb_port = args.usb_port + 2
-    api_port = args.api_port + 2
-    env = os.environ.copy()
-    server_args = [
-        # The Windows native/fallback attach resolves the host through the
-        # active LAN adapter, so the isolated USB/IP listener must not be
-        # restricted to loopback. The API remains loopback-only below.
-        str(viiper), "server", "--usb.addr=0.0.0.0:" + str(usb_port),
-        "--api.addr=127.0.0.1:" + str(api_port),
-        "--api.auto-attach-local-client=true",
-        "--usb.retained-import-authority-id=1",
-    ]
-    server = subprocess.Popen(server_args, env=env,
-                              stdout=subprocess.DEVNULL,
-                              stderr=subprocess.STDOUT)
-    try:
-        for _ in range(60):
-            try:
-                status = api_request("127.0.0.1", api_port, "server/status")
-                if status.get("state") == "running":
-                    break
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                time.sleep(0.2)
-        else:
-            die("VIIPER no abrió el API Xbox One/Series")
-
-        print("[INFO] Ejecutando la matriz autenticada Xbox One/Series...")
-        client = subprocess.Popen(
-            [str(xbox_client), *xbox_client_args,
-             "--addr", f"127.0.0.1:{api_port}",
-             "--key-file", str(key_file), "--input-test", "--hold-seconds", "1"],
-            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True,
-        )
-        status = {}
-        best_status = {}
-        best_status_score = (-1, -1)
-        deadline = time.monotonic() + 60
-        while client.poll() is None and time.monotonic() < deadline:
-            try:
-                status = api_request("127.0.0.1", api_port, "server/status")
-                score = (status.get("activeStreams", 0),
-                         status.get("activeImports", 0))
-                if score > best_status_score:
-                    best_status = status
-                    best_status_score = score
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                pass
-            time.sleep(0.1)
-        if client.poll() is None:
-            client.kill()
-            output, _ = client.communicate(timeout=5)
-            die("La prueba Xbox One/Series excedió 60 segundos:\n" + output)
-        output, _ = client.communicate(timeout=5)
-        output = output.strip()
-        entry["clientOutput"] = output
-        entry["tests"] = parse_xbox_client_tests(output)
-        entry["statusSnapshot"] = best_status or status
-        persona = re.search(
-            r'persona creada: bus=(\d+) dev=(\S+) vid=([0-9A-Fa-f]+) '
-            r'pid=([0-9A-Fa-f]+) producto="([^"]+)" '
-            r'deviceID=([0-9A-Fa-f]+) serial=(\S+) usbip=(\S+)', output)
-        if persona:
-            entry["identity"].update({
-                "busId": int(persona.group(1)),
-                "devId": persona.group(2),
-                "vid": "0x" + persona.group(3).lower(),
-                "pid": "0x" + persona.group(4).lower(),
-                "product": persona.group(5),
-                "description": persona.group(5),
-                "deviceID": "0x" + persona.group(6).lower(),
-                "serial": persona.group(7),
-                "uid": persona.group(7),
-                "usbipBusId": persona.group(8),
-            })
-        attach = re.search(r"attach nativo aceptado: .* port=(\d+)", output)
-        if attach:
-            entry["identity"]["usbipPort"] = [int(attach.group(1))]
-        observed_status = best_status or status
-        live = next(iter(observed_status.get("buses", [{}])[0].get("devices", [])), {}) \
-            if observed_status.get("buses") else {}
-        entry["identity"].update({
-            "usbipImported": live.get("usbipImported", False),
-            "inputStreamActive": live.get("inputStreamActive", False),
-        })
-        entry["result"] = "PASS" if (
-            client.returncode == 0 and entry["tests"] and
-            all(test.get("status") == "PASS" for test in entry["tests"])
-        ) else "FAIL"
-        if entry["result"] != "PASS":
-            die("La prueba Xbox One/Series falló:\n" + output)
-        print("[PASS] xboxone/xboxseries: matriz autenticada completada")
-        return 0
-    except Exception as error:
-        entry["error"] = str(error)
-        raise
-    finally:
-        if server.poll() is None:
-            try:
-                api_request("127.0.0.1", api_port, "server/shutdown", timeout=5)
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                try:
-                    server.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    print("[WARN] El servidor Xbox no confirmó el cierre interno",
-                          file=sys.stderr)
-        print("[INFO] VIIPER Xbox One/Series cerrado mediante server/shutdown")
-
-
 def run(args: argparse.Namespace) -> int:
     report = args._report
     run_generic_matrix(args, report)
@@ -833,13 +583,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--viiper", help="Ruta a viiper.exe")
     parser.add_argument("--usbip", help="Ruta a usbip.exe")
-    parser.add_argument(
-        "--xboxone-client",
-        help="Ruta opcional a un cliente Xbox externo; por defecto usa viiper.exe xboxone-client",
-    )
     parser.add_argument("--xbox-profile", choices=("xboxone", "xboxseries"),
                         default="xboxone",
-                        help="Perfil de identidad Xbox que se probará")
+                        help="Dispositivo Xbox nativo que se probará")
     parser.add_argument("--skip-xboxone", action="store_true",
                         help="Omite la matriz autenticada Xbox One/Series")
     parser.add_argument("--no-attach", action="store_true",

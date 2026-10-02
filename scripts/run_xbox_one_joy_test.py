@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Create a real VIIPER Xbox HID gamepad and exercise it for joy.cpl.
+"""Create a native VIIPER Xbox One/Series gamepad and exercise joy.cpl.
 
-This deliberately uses xboxonehid/xboxserieshid instead of the retained
-xboxone-client GIP persona. The latter is for XInput/XboxComposite and is not
-enumerated by the legacy Windows game-controller panel.
+The profile is created through the same generic device registry used by the
+other native VIIPER devices: ``xboxone`` or ``xboxseries``.
 """
 
 from __future__ import annotations
@@ -79,10 +78,12 @@ def used_usbip_ports(usbip: Path, usb_port: int) -> set[int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--viiper", help="ruta a viiper-gip-xone-base.exe")
+    parser.add_argument("--viiper", help="ruta a viiper.exe")
     parser.add_argument("--usbip", help="ruta a usbip.exe")
     parser.add_argument("--profile", choices=("xboxone", "xboxseries"),
                         default="xboxone")
+    parser.add_argument("--vid", help="VID alternativo para la prueba, por ejemplo 0x1209")
+    parser.add_argument("--pid", help="PID alternativo para la prueba, por ejemplo 0x5649")
     parser.add_argument("--seconds", type=int, default=30)
     parser.add_argument("--usb-port", type=int, default=3291)
     parser.add_argument("--api-port", type=int, default=3292)
@@ -91,15 +92,15 @@ def main() -> int:
         raise RuntimeError("--seconds debe ser positivo")
 
     viiper = find_file(args.viiper, [
-        ROOT / "viiper-gip-xone-base.exe",
-        ROOT.parents[1] / "outputs" / "viiper-gip-xone-base.exe",
-        ROOT.parent / "outputs" / "viiper-gip-xone-base.exe",
-        "viiper-gip-xone-base.exe",
+        ROOT / "viiper.exe",
+        ROOT.parents[1] / "outputs" / "viiper.exe",
+        ROOT.parent / "outputs" / "viiper.exe",
+        "viiper.exe",
     ])
     usbip = find_file(args.usbip, [
         Path(r"C:\Program Files\USBip\usbip.exe"), "usbip.exe", "usbip",
     ])
-    device_type = "xboxonehid" if args.profile == "xboxone" else "xboxserieshid"
+    device_type = args.profile
     server = subprocess.Popen([
         str(viiper), "server", f"--usb.addr=127.0.0.1:{args.usb_port}",
         f"--api.addr=127.0.0.1:{args.api_port}",
@@ -120,9 +121,14 @@ def main() -> int:
 
         bus_id = int(api_request("127.0.0.1", args.api_port,
                                  "bus/create")["busId"])
+        create_payload = {"type": device_type}
+        if args.vid is not None:
+            create_payload["idVendor"] = int(args.vid, 0)
+        if args.pid is not None:
+            create_payload["idProduct"] = int(args.pid, 0)
         created = api_request(
             "127.0.0.1", args.api_port,
-            f'bus/{bus_id}/add {{"type":"{device_type}"}}')
+            f"bus/{bus_id}/add {json.dumps(create_payload)}")
         dev_id = str(created["devId"])
         stream = socket.create_connection(("127.0.0.1", args.api_port), timeout=5)
         stream.sendall(f"bus/{bus_id}/{dev_id}\0".encode())
@@ -144,7 +150,7 @@ def main() -> int:
         print(f"VID:PID HID: {created.get('vid')}:{created.get('pid')}")
         print(f"Producto: VIIPER Xbox {'One' if args.profile == 'xboxone' else 'Series X|S'} Controller")
         print(f"usbip: {bus_id_usbip} -> puerto local {attached_port}")
-        print("Abre joy.cpl y selecciona 'Dispositivo de juego compatible con HID'.")
+        print("Abre joy.cpl y selecciona el mando VIIPER detectado.")
         print("La prueba repetirá botones, triggers y sticks durante "
               f"{args.seconds} segundos.")
 

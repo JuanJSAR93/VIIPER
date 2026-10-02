@@ -1,4 +1,4 @@
-package xboxone
+package xboxseries
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/Alia5/VIIPER/usb"
 )
 
-func init() { api.RegisterDevice("xboxone", &handler{}) }
+func init() { api.RegisterDevice("xboxseries", &handler{}) }
 
 type handler struct{}
 
@@ -22,14 +22,14 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 		if devPtr == nil || *devPtr == nil {
 			return fmt.Errorf("nil device")
 		}
-		gamepad, ok := (*devPtr).(*XboxOne)
+		gamepad, ok := (*devPtr).(*XboxSeries)
 		if !ok {
-			return fmt.Errorf("%w: expected XboxOne", device.ErrWrongDeviceType)
+			return fmt.Errorf("%w: expected XboxSeries", device.ErrWrongDeviceType)
 		}
 		gamepad.SetRumbleCallback(func(state RumbleState) {
 			payload := []byte{state.LeftMotor, state.RightMotor}
 			if _, err := conn.Write(payload); err != nil {
-				logger.Error("send Xbox One rumble", "error", err)
+				logger.Error("send Xbox Series rumble", "error", err)
 			}
 		})
 		defer gamepad.SetRumbleCallback(nil)
@@ -39,11 +39,11 @@ func (h *handler) StreamHandler() api.StreamHandlerFunc {
 				if err == io.EOF {
 					return nil
 				}
-				return fmt.Errorf("read Xbox One input state: %w", err)
+				return fmt.Errorf("read Xbox Series input state: %w", err)
 			}
 			var state InputState
 			if err := state.UnmarshalBinary(buffer); err != nil {
-				return fmt.Errorf("decode Xbox One input state: %w", err)
+				return fmt.Errorf("decode Xbox Series input state: %w", err)
 			}
 			gamepad.UpdateInputState(state)
 		}

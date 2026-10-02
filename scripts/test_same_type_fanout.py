@@ -4,7 +4,7 @@
 Cada grupo usa un servidor y un bus reales. Para los dispositivos genéricos se
 crean N dispositivos del mismo tipo, se abren N streams, se envía la matriz
 completa de entradas y se monta cada dispositivo mediante usbip-win2. Xbox
-One/Series usa N procesos autenticados del cliente integrado.
+One/Series usa el mismo registro genérico y stream que los demás.
 """
 
 from __future__ import annotations
@@ -300,39 +300,9 @@ def run_generic_group(
         print(f"[INFO] Grupo {kind} x{count} cerrado")
 
 
-def parse_xbox_output(output: str, profile: str) -> dict:
-    entry = new_entry("Xbox One/Series", profile)
-    entry["clientOutput"] = output.strip()
-    entry["tests"] = base.parse_xbox_client_tests(output)
-    persona = re.search(
-        r'persona creada: bus=(\d+) dev=(\S+) vid=([0-9A-Fa-f]+) '
-        r'pid=([0-9A-Fa-f]+) producto="([^"]+)" '
-        r'deviceID=([0-9A-Fa-f]+) serial=(\S+) usbip=(\S+)',
-        output,
-    )
-    if persona:
-        entry["identity"].update(
-            {
-                "busId": int(persona.group(1)),
-                "devId": persona.group(2),
-                "numericBusDevice": f"{persona.group(1)}-{persona.group(2)}",
-                "vid": "0x" + persona.group(3).lower(),
-                "pid": "0x" + persona.group(4).lower(),
-                "product": persona.group(5),
-                "description": persona.group(5),
-                "deviceID": "0x" + persona.group(6).lower(),
-                "serial": persona.group(7),
-                "uid": persona.group(7),
-                "usbipBusId": f"{persona.group(1)}-{persona.group(2)}",
-                "usbipExportAlias": persona.group(8),
-            }
-        )
-    attach = re.search(r"attach nativo aceptado: .* port=(\d+)", output)
-    if attach:
-        entry["identity"]["usbipPort"] = [int(attach.group(1))]
-    return entry
-
-
+# Native Xbox One/Series replacement. The public fan-out path uses the same
+# generic API as the other VIIPER devices; the older retained helper above is
+# left only as historical code until the legacy report parser is removed.
 def run_xbox_group(
     viiper: Path,
     usbip: Path,
@@ -342,133 +312,9 @@ def run_xbox_group(
     usb_port: int,
     api_port: int,
 ) -> dict:
-    group = {
-        "type": profile,
-        "count": count,
-        "result": "FAIL",
-        "controllers": [],
-    }
-    server = launch_server(viiper, usbip, usb_port, api_port)
-    bus_id: int | None = None
-    clients: list[subprocess.Popen] = []
-    try:
-        wait_server(api_port)
-        bus_id = int(base.api_request("127.0.0.1", api_port, "bus/create")["busId"])
-        group["busId"] = bus_id
-        print(f"[INFO] {profile} x{count}: bus={bus_id}")
-        for _ in range(count):
-            clients.append(
-                subprocess.Popen(
-                    [
-                        str(viiper),
-                        "xboxone-client",
-                        "--addr",
-                        f"127.0.0.1:{api_port}",
-                        "--key-file",
-                        str(key_file),
-                        "--bus-id",
-                        str(bus_id),
-                        "--profile",
-                        profile,
-                        "--input-test",
-                        "--hold-seconds",
-                        "5",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-            )
-
-        best_status: dict = {}
-        best_score = (-1, -1, -1)
-        deadline = time.monotonic() + max(45, count * 15)
-        while time.monotonic() < deadline and any(client.poll() is None for client in clients):
-            try:
-                status = base.api_request("127.0.0.1", api_port, "server/status")
-                devices = bus_devices(status, bus_id)
-                score = (
-                    len(devices),
-                    sum(bool(device.get("usbipImported")) for device in devices),
-                    sum(bool(device.get("inputStreamActive")) for device in devices),
-                )
-                if score > best_score:
-                    best_score = score
-                    best_status = status
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                pass
-            time.sleep(0.1)
-
-        if any(client.poll() is None for client in clients):
-            diagnostic: list[str] = []
-            for client in clients:
-                if client.poll() is None:
-                    client.kill()
-                try:
-                    output, _ = client.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
-                    output = "<sin salida: el proceso no terminó tras kill>"
-                diagnostic.append(output.strip())
-            raise RuntimeError(
-                f"{profile} x{count}: una sesión Xbox excedió el tiempo límite\n"
-                + "\n--- cliente ---\n".join(diagnostic)
-            )
-
-        devices = bus_devices(best_status, bus_id)
-        for index, client in enumerate(clients, start=1):
-            output, _ = client.communicate(timeout=10)
-            entry = parse_xbox_output(output, profile)
-            entry["name"] = f"{profile} #{index}"
-            dev_id = str(entry["identity"].get("devId", ""))
-            live = next((device for device in devices if str(device.get("devId")) == dev_id), {})
-            entry["statusSnapshot"] = best_status
-            entry["identity"].update(
-                {
-                    "usbipImported": live.get("usbipImported", False),
-                    "inputStreamActive": live.get("inputStreamActive", False),
-                    "deviceSpecific": live.get("deviceSpecific", {}),
-                }
-            )
-            entry["result"] = "PASS" if (
-                client.returncode == 0
-                and len(entry["tests"]) == 36
-                and all(test.get("status") == "PASS" for test in entry["tests"])
-                and entry["identity"]["usbipImported"] is True
-                and entry["identity"]["inputStreamActive"] is True
-            ) else "FAIL"
-            group["controllers"].append(entry)
-            print(
-                f"[{entry['result']}] {entry['name']}: "
-                f"{len(entry['tests'])}/36 estados; "
-                f"stream={entry['identity']['inputStreamActive']}; "
-                f"usbipImported={entry['identity']['usbipImported']}"
-            )
-        group["statusSnapshot"] = best_status
-        group["result"] = "PASS" if all(
-            entry["result"] == "PASS" for entry in group["controllers"]
-        ) else "FAIL"
-        return group
-    finally:
-        for client in clients:
-            if client.poll() is None:
-                client.kill()
-                client.wait(timeout=5)
-        if bus_id is not None:
-            try:
-                base.api_request("127.0.0.1", api_port, f"bus/remove {bus_id}", timeout=3)
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                pass
-        if server.poll() is None:
-            try:
-                base.api_request("127.0.0.1", api_port, "server/shutdown", timeout=5)
-            except (OSError, RuntimeError, json.JSONDecodeError):
-                pass
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.terminate()
-                server.wait(timeout=5)
-        print(f"[INFO] Grupo {profile} x{count} cerrado")
+    del key_file
+    return run_generic_group(viiper, usbip, profile, profile, count,
+                             usb_port, api_port)
 
 
 def write_report(path: Path, report: dict) -> None:
@@ -593,12 +439,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--viiper", required=True, help="Ruta a viiper.exe")
     parser.add_argument("--usbip", help="Ruta a usbip.exe")
-    parser.add_argument("--key-file", help="Clave VIIPER para Xbox One/Series")
+    parser.add_argument("--key-file", help="compatibilidad histórica; ya no es necesario")
     parser.add_argument(
         "--xbox-profile",
         choices=("xboxone", "xboxseries"),
         default="xboxone",
-        help="Perfil Xbox que se prueba en los grupos autenticados",
+        help="Perfil Xbox nativo que se prueba en los grupos",
     )
     parser.add_argument(
         "--counts",
@@ -609,7 +455,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--only-type",
-        choices=("xbox360", "dualshock4", "dualsense", "ns2pro", "xboxone"),
+        choices=("xbox360", "dualshock4", "dualsense", "ns2pro", "xboxone", "xboxseries"),
         help="Ejecuta únicamente un tipo",
     )
     parser.add_argument("--usb-port", type=int, default=3261)
@@ -622,16 +468,17 @@ def main() -> int:
 
     viiper = base.find_executable(args.viiper, [])
     usbip = base.find_executable(args.usbip, [Path(r"C:\Program Files\USBip\usbip.exe"), "usbip.exe"])
-    key_file = Path(args.key_file).expanduser() if args.key_file else (
-        Path(os.environ.get("APPDATA", "")) / "VIIPER" / "viiper.key.txt"
-    )
-    if not key_file.is_file():
-        parser.error(f"no se encontró la clave VIIPER: {key_file}")
+    key_file = Path(args.key_file).expanduser() if args.key_file else Path()
 
     selected_generic = list(GENERIC_SPECS)
     if args.only_type:
         selected_generic = [spec for spec in GENERIC_SPECS if spec[0] == args.only_type]
-    include_xbox = args.only_type in (None, "xboxone")
+    selected_xbox_profile = (
+        args.only_type
+        if args.only_type in ("xboxone", "xboxseries")
+        else args.xbox_profile
+    )
+    include_xbox = args.only_type is None or args.only_type == selected_xbox_profile
     report = {
         "startedAt": datetime.now(timezone.utc).isoformat(),
         "result": "FAIL",
@@ -664,7 +511,7 @@ def main() -> int:
                     run_xbox_group(
                         viiper,
                         usbip,
-                        args.xbox_profile,
+                        selected_xbox_profile,
                         key_file,
                         count,
                         args.usb_port + group_index * 4,

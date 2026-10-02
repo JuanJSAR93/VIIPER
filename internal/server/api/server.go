@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Alia5/VIIPER/device/xboxone"
 	"github.com/Alia5/VIIPER/internal/server/api/auth"
 	apierror "github.com/Alia5/VIIPER/internal/server/api/error"
 	"github.com/Alia5/VIIPER/internal/server/usb"
@@ -32,7 +31,6 @@ type Server struct {
 	router        *Router
 	config        *ServerConfig
 	deviceStreams deviceStreamCoordinator
-	xboxRetries   *xboxOneRetryCleanup
 }
 
 // microphonePCMResetter is implemented by audio-capable virtual controllers.
@@ -58,8 +56,6 @@ func New(s *usb.Server, addr string, config ServerConfig, logger *slog.Logger) *
 		config: &cfg,
 	}
 	a.router = NewRouter()
-	a.xboxRetries = newXboxOneRetryCleanup(logger)
-	s.SetFailedImportObserver(a.xboxRetries.observe)
 	return a
 }
 
@@ -316,21 +312,6 @@ func (s *Server) handleConn(conn net.Conn) {
 		// disappear in the handshake reader and stall framing indefinitely.
 		buffered := &bufferedReadConn{Conn: conn, reader: r}
 		var streamConn net.Conn = buffered
-		protectedXbox := strings.HasSuffix(path, "/stream-authorized-xboxone")
-		var xboxAdmission *XboxOneRegistrationAdmission
-		if protectedXbox {
-			if !isAuth {
-				s.writeError(w, apierror.ErrUnauthorized("authenticated Xbox One stream required"))
-				return
-			}
-			var err error
-			xboxAdmission, err = SelectAuthorizedXboxOneRegistration(s.usbs, params["busId"], params["deviceid"], payload)
-			if err != nil {
-				s.writeError(w, err)
-				return
-			}
-			streamConn = &xboxOneRegistrationConn{bufferedReadConn: buffered, admission: xboxAdmission}
-		}
 		busIDStr, ok := params["busId"]
 		if !ok {
 			s.writeError(w, apierror.ErrBadRequest("missing busId parameter"))
@@ -354,21 +335,12 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		var dev pusb.Device
 		var registration virtualbus.DeviceMeta
-		if xboxAdmission != nil {
-			registration = xboxAdmission.Registration()
-			dev = registration.Dev
-		} else {
-			metas := bus.GetAllDeviceMetas()
-			for _, meta := range metas {
-				if fmt.Sprintf("%d", meta.Meta.DevID) == devIDStr {
-					dev = meta.Dev
-					registration = meta
-					break
-				}
-			}
-			if _, protected := dev.(*xboxone.AuthorizedDormantRetainedUSBDevice); protected {
-				s.writeError(w, apierror.ErrUnauthorized("Xbox One stream requires its exact registration capability"))
-				return
+		metas := bus.GetAllDeviceMetas()
+		for _, meta := range metas {
+			if fmt.Sprintf("%d", meta.Meta.DevID) == devIDStr {
+				dev = meta.Dev
+				registration = meta
+				break
 			}
 		}
 		devCtx := registration.Context
@@ -382,18 +354,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			registrationToken: registration.RegistrationToken,
 		}
 		var lease *deviceStreamLease
-		if xboxAdmission != nil {
-			var err error
-			lease, err = xboxAdmission.claimStream(func() *deviceStreamLease {
-				return s.deviceStreams.claimExclusive(streamKey, streamConn)
-			})
-			if err != nil {
-				s.writeError(w, err)
-				return
-			}
-		} else {
-			lease = s.deviceStreams.claim(streamKey, streamConn)
-		}
+		lease = s.deviceStreams.claim(streamKey, streamConn)
 		handlerStarted := false
 		defer func() {
 			if !handlerStarted {
@@ -427,11 +388,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		default:
 		}
 
-		// Stream handler takes ownership of connection
-		if xboxAdmission != nil {
-			stopClosing := context.AfterFunc(devCtx, func() { _ = streamConn.Close() })
-			defer stopClosing()
-		}
+		// Stream handler takes ownership of connection.
 		handlerStarted = true
 		if err := sh(streamConn, &dev, connLogger); err != nil {
 			connLogger.Error("api stream handler error", "path", path, "error", err)

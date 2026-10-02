@@ -5,19 +5,19 @@ package main
 #include <stdbool.h>
 
 typedef uintptr_t USBServerHandle;
-typedef uintptr_t XboxOneNativeDeviceHandle;
+typedef uintptr_t XboxSeriesDeviceHandle;
 
 typedef struct {
 	uint16_t Buttons;
 	uint16_t LeftTrigger, RightTrigger;
 	int16_t LeftStickX, LeftStickY, RightStickX, RightStickY;
-} XboxOneNativeDeviceState;
+} XboxSeriesDeviceState;
 
-typedef void (*XboxOneNativeRumbleCallback)(XboxOneNativeDeviceHandle handle,
+typedef void (*XboxSeriesRumbleCallback)(XboxSeriesDeviceHandle handle,
 	uint8_t leftMotor, uint8_t rightMotor);
 
-static void viiper_call_xboxone_native_rumble(XboxOneNativeRumbleCallback fn,
-	XboxOneNativeDeviceHandle handle, uint8_t left, uint8_t right) {
+static void viiper_call_xboxseries_rumble(XboxSeriesRumbleCallback fn,
+	XboxSeriesDeviceHandle handle, uint8_t left, uint8_t right) {
 	fn(handle, left, right);
 }
 */
@@ -31,16 +31,16 @@ import (
 	"slices"
 
 	"github.com/Alia5/VIIPER/device"
-	"github.com/Alia5/VIIPER/device/xboxone"
+	"github.com/Alia5/VIIPER/device/xboxseries"
 	"github.com/Alia5/VIIPER/internal/server/api"
 )
 
-// CreateXboxOneNativeDevice creates the native Xbox One USB/IP HID persona.
+// CreateXboxSeriesDevice creates the native Xbox Series X|S USB/IP persona.
 //
-//export CreateXboxOneNativeDevice
-func CreateXboxOneNativeDevice(
+//export CreateXboxSeriesDevice
+func CreateXboxSeriesDevice(
 	serverHandle C.USBServerHandle,
-	outDeviceHandle *C.XboxOneNativeDeviceHandle,
+	outDeviceHandle *C.XboxSeriesDeviceHandle,
 	busID uint32,
 	autoAttachLocalhost C.bool,
 	idVendor uint16,
@@ -64,7 +64,7 @@ func CreateXboxOneNativeDevice(
 	if idProduct != 0 {
 		opts.IDProduct = &idProduct
 	}
-	d, err := xboxone.New(opts)
+	d, err := xboxseries.New(opts)
 	if err != nil {
 		return false
 	}
@@ -82,7 +82,7 @@ func CreateXboxOneNativeDevice(
 			return false
 		}
 	}
-	handle := C.XboxOneNativeDeviceHandle(cgo.NewHandle(&deviceHandleWrapper{
+	handle := C.XboxSeriesDeviceHandle(cgo.NewHandle(&deviceHandleWrapper{
 		device: d, exportMeta: exportMeta, usbServer: shw,
 	}))
 	*outDeviceHandle = handle
@@ -92,20 +92,20 @@ func CreateXboxOneNativeDevice(
 	return true
 }
 
-// SetXboxOneNativeDeviceState updates the native Xbox One HID state.
+// SetXboxSeriesDeviceState updates the native Xbox Series X|S HID state.
 //
-//export SetXboxOneNativeDeviceState
-func SetXboxOneNativeDeviceState(handle C.XboxOneNativeDeviceHandle,
-	state C.XboxOneNativeDeviceState) bool {
+//export SetXboxSeriesDeviceState
+func SetXboxSeriesDeviceState(handle C.XboxSeriesDeviceHandle,
+	state C.XboxSeriesDeviceState) bool {
 	dhw, ok := cgo.Handle(handle).Value().(*deviceHandleWrapper)
 	if !ok || dhw == nil {
 		return false
 	}
-	gamepad, ok := dhw.device.(*xboxone.XboxOne)
+	gamepad, ok := dhw.device.(*xboxseries.XboxSeries)
 	if !ok {
 		return false
 	}
-	gamepad.UpdateInputState(xboxone.InputState{
+	gamepad.UpdateInputState(xboxseries.InputState{
 		Buttons: uint16(state.Buttons), LeftTrigger: uint16(state.LeftTrigger),
 		RightTrigger: uint16(state.RightTrigger), LeftStickX: int16(state.LeftStickX),
 		LeftStickY: int16(state.LeftStickY), RightStickX: int16(state.RightStickX),
@@ -114,16 +114,16 @@ func SetXboxOneNativeDeviceState(handle C.XboxOneNativeDeviceHandle,
 	return true
 }
 
-// SetXboxOneNativeRumbleCallback installs the native HID feedback callback.
+// SetXboxSeriesRumbleCallback installs the native HID feedback callback.
 //
-//export SetXboxOneNativeRumbleCallback
-func SetXboxOneNativeRumbleCallback(handle C.XboxOneNativeDeviceHandle,
-	callback C.XboxOneNativeRumbleCallback) bool {
+//export SetXboxSeriesRumbleCallback
+func SetXboxSeriesRumbleCallback(handle C.XboxSeriesDeviceHandle,
+	callback C.XboxSeriesRumbleCallback) bool {
 	dhw, ok := cgo.Handle(handle).Value().(*deviceHandleWrapper)
 	if !ok || dhw == nil {
 		return false
 	}
-	gamepad, ok := dhw.device.(*xboxone.XboxOne)
+	gamepad, ok := dhw.device.(*xboxseries.XboxSeries)
 	if !ok {
 		return false
 	}
@@ -131,17 +131,17 @@ func SetXboxOneNativeRumbleCallback(handle C.XboxOneNativeDeviceHandle,
 		gamepad.SetRumbleCallback(nil)
 		return true
 	}
-	gamepad.SetRumbleCallback(func(state xboxone.RumbleState) {
-		C.viiper_call_xboxone_native_rumble(callback, handle,
+	gamepad.SetRumbleCallback(func(state xboxseries.RumbleState) {
+		C.viiper_call_xboxseries_rumble(callback, handle,
 			C.uint8_t(state.LeftMotor), C.uint8_t(state.RightMotor))
 	})
 	return true
 }
 
-// RemoveXboxOneNativeDevice removes the native Xbox One HID device.
+// RemoveXboxSeriesDevice removes the native Xbox Series X|S device.
 //
-//export RemoveXboxOneNativeDevice
-func RemoveXboxOneNativeDevice(handle C.XboxOneNativeDeviceHandle) bool {
+//export RemoveXboxSeriesDevice
+func RemoveXboxSeriesDevice(handle C.XboxSeriesDeviceHandle) bool {
 	dhw, ok := cgo.Handle(handle).Value().(*deviceHandleWrapper)
 	if !ok || dhw == nil || dhw.usbServer == nil || dhw.exportMeta == nil {
 		return false

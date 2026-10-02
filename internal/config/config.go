@@ -21,7 +21,6 @@ type CLI struct {
 
 	Server  cmd.Server        `cmd:"" help:"Start the VIIPER USB-IP server" default:""`
 	Proxy   cmd.Proxy         `cmd:"" help:"Start the VIIPER USB-IP proxy"`
-	XboxOne cmd.XboxOneClient `cmd:"" name:"xboxone-client" help:"Run the authenticated Xbox One/Series feeder"`
 
 	Config    cmd.ConfigCommand `cmd:"" help:"Manage configuration files"`
 	Install   cmd.Install       `cmd:"" help:"Add the current VIIPER executable to system startup and runs it (creates a Systemd service on Linux)"`

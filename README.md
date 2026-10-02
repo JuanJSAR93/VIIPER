@@ -82,7 +82,8 @@ device from a physical controller that uses the same protocol or VID/PID.
 | DualShock 4 | `VIIPER DualShock 4 Controller` | DS4-compatible virtual USB device |
 | DualSense | `VIIPER DualSense Wireless Controller` | DS5-compatible virtual USB device |
 | Switch 2 Pro | `VIIPER Switch 2 Pro Controller` | Switch 2 Pro-compatible virtual USB device |
-| Xbox One/Series | `VIIPER Xbox One Controller` or an authorized profile string | Explicit retained USB/IP development path |
+| Xbox One | `VIIPER Xbox One Controller` | Native USB/IP HID persona, `045E:02D1` |
+| Xbox Series X/S | `VIIPER Xbox Series X|S Controller` | Native USB/IP HID persona, `045E:0B12` |
 
 The product string is the primary signal. The PnP parent and service can be
 used as corroborating evidence, but they may vary with Windows, the installed
@@ -90,38 +91,29 @@ driver, and the USB topology. Do not identify virtual devices using VID/PID
 alone. See [Windows device identification](docs/VIIPER_DEVICE_IDENTIFICATION.md)
 for a PowerShell example.
 
-### Xbox One and Xbox Series retained path
+### Xbox One and Xbox Series
 
-The repository contains an explicit, authenticated retained USB/IP composition
-for Xbox One/Series. Its API endpoint is separate from the generic factory
-because it supplies the authorized identity, USB profile, product strings, GIP
-device identity, and removal capability; it does not require a separate USB
-bus. The development feeder is integrated into the main executable as
-`viiper.exe xboxone-client`, so no second client binary is required.
+The old `viiper.exe xboxone-client` feeder and the provisional
+`internal/devicecatalog/xboxonehid.go` catalog have been removed. Xbox One and
+Xbox Series are now normal first-class VIIPER device types, registered exactly
+like Xbox 360, DS4, DS5 and NS2P:
 
-This path supports the VIIPER broker protocol for semantic input, canonical
-feedback acknowledgements, USB/IP import, and exact registration removal. It is
-not a claim that every Xbox One or Series firmware, Windows binding, or physical
-controller has been validated. See the [Xbox One API notes](docs/api/xboxone-exact-removal.md)
-and the [Xbox One provenance record](device/xboxone/PROVENANCE.md).
+```text
+bus/{busId}/add {"type":"xboxone"}
+bus/{busId}/add {"type":"xboxseries"}
+```
 
-The two Xbox One/Series output personas are implemented together in
-`device/xboxone`: the retained GIP/XInput persona and the HID/DirectInput
-compatibility persona. They share the `InputStateV1` semantic model and its
-button/axis mapping. The small `internal/devicecatalog/xboxonehid.go` file only
-registers the public `xboxonehid` and `xboxserieshid` factory names; it is not a
-second device implementation.
+Their implementations are independent in `device/xboxone` and
+`device/xboxseries`; no retained GIP engine or special Xbox client is involved.
 
 ### Xbox One/Series visible in `joy.cpl`
 
-The retained `xboxone-client` path intentionally exposes the native vendor-specific
-GIP interface. Windows binds that interface to `XboxComposite`/XInput, so it is
-not the correct path for `joy.cpl`. For a controller that must appear in the
-Windows game-controller panel and DirectInput, use the HID compatibility types:
+The native Xbox One/Series devices expose USB/IP HID personas intended for
+`joy.cpl` and the Windows HID input stack:
 
 ```text
-bus/{busId}/add {"type":"xboxonehid"}
-bus/{busId}/add {"type":"xboxserieshid"}
+bus/{busId}/add {"type":"xboxone"}
+bus/{busId}/add {"type":"xboxseries"}
 ```
 
 Para una prueba manual de 30 segundos con `joy.cpl`, ejecuta desde la raíz del
@@ -144,21 +136,6 @@ cambio con la etiqueta `axisN` o `buttonN`. La matriz HID prueba los 16 botones
 (`button0` a `button15`), los seis canales de ejes (sticks y triggers) y deja
 el mando en estado neutral antes de desmontarlo.
 
-Para probar la ruta GIP/XboxComposite con el mismo flujo, dejando `joy.cpl`
-abierto y observando también XInput:
-
-```powershell
-python scripts/run_xbox_gip_joy_test.py xboxone
-```
-
-Usa `python scripts/run_xbox_gip_joy_test.py xboxseries` para `045E:0B12`. El script informa `PNP_SEEN` y
-`XINPUT_DYNAMIC_STATE_SEEN`; el segundo debe quedar en `True` cuando los
-reportes dinámicos lleguen correctamente a Windows.
-
-El script crea el bus, adjunta el dispositivo con `usbip-win2`, abre el stream,
-repite todos los controles y desmonta el dispositivo al terminar. Usa
-`--viiper` y `--usbip` si los ejecutables no están en las rutas habituales.
-
 These types follow the HID implementations used by the DS4, DualSense, NS2 Pro,
 keyboard, and mouse devices in this repository: one HID gamepad interface, a
 report descriptor, interrupt IN/OUT endpoints, and a semantic input stream.
@@ -167,16 +144,16 @@ The stream frame is 14 bytes in this order:
 `buttons:u16, leftTrigger:u16, rightTrigger:u16, leftX:i16, leftY:i16,
 rightX:i16, rightY:i16`.
 
-The HID compatibility persona uses VIIPER-owned IDs (`1209:5649` for Xbox One
-and `1209:564A` for Xbox Series) while keeping the product strings
-`VIIPER Xbox One Controller` and `VIIPER Xbox Series X|S Controller`. This is
-deliberate: using Microsoft's `045E:02EA` or `045E:0B12` makes Windows select
-`XboxComposite` before `joy.cpl` can use the HID interface. The native retained
-path remains unchanged and continues to use the Microsoft IDs.
+The native personas use the planned Microsoft VID/PID pairs (`045E:02D1` for
+Xbox One and `045E:0B12` for Xbox Series) and keep the VIIPER product strings.
+The descriptor path is HID/DirectInput; it must not be presented as proof of
+XInput/XboxComposite compatibility until a live Windows binding test confirms
+that behavior. The old retained GIP path was removed from the server.
 
 ### Juegos que exigen XInput
 
-La ruta HID `xboxonehid`/`xboxserieshid` no puede ser consumida como XInput:
+La ruta HID `xboxone`/`xboxseries` no puede ser consumida como XInput por el
+mero hecho de usar VID/PID Microsoft:
 es una interfaz DirectInput para `joy.cpl`. La ruta GIP One/Series sí intenta
 usar `XboxComposite`, pero debe producir estados dinámicos antes de considerarse
 lista para un juego. La alternativa XInput ya verificada en Windows es el
@@ -497,70 +474,17 @@ Test-NetConnection 127.0.0.1 -Port 3242
 
 ### 2. Ejecutar Xbox One o Xbox Series
 
-El cliente integrado se ejecuta como subcomando del mismo `viiper.exe` y debe
-conectarse al servidor ya iniciado. El perfil `xboxone` crea:
+Los perfiles nativos disponibles son:
 
-```text
-VID:PID       045E:02EA
-Producto      VIIPER Xbox One Controller
-```
+| Perfil | VID:PID | Producto |
+| --- | --- | --- |
+| `xboxone` | `045E:02D1` | `VIIPER Xbox One Controller` |
+| `xboxseries` | `045E:0B12` | `VIIPER Xbox Series X|S Controller` |
 
-Ejemplo:
-
-```powershell
-.\viiper.exe xboxone-client `
-  --addr=127.0.0.1:3242 `
-  --key-file="$env:APPDATA\VIIPER\viiper.key.txt" `
-  --profile=xboxone `
-  --input-test `
-  --hold-seconds=3
-```
-
-Para probar el perfil Xbox Series X|S cambia únicamente el perfil:
-
-```powershell
-.\viiper.exe xboxone-client `
-  --addr=127.0.0.1:3242 `
-  --key-file="$env:APPDATA\VIIPER\viiper.key.txt" `
-  --profile=xboxseries `
-  --input-test `
-  --hold-seconds=3
-```
-
-El perfil Xbox Series crea:
-
-```text
-VID:PID       045E:0B12
-Producto      VIIPER Xbox Series X|S Controller
-```
-
-La ruta Xbox usa por defecto el perfil GIP estándar compatible con `xone`:
-metadata de `Windows.Xbox.Input.Gamepad`, informe de entrada de 14 bytes y
-mensaje GIP de 18 bytes (`0x20 0x00 <secuencia> 0x0E`). Esto permite que
-Windows lo enumere mediante `XboxComposite`/XInput como un mando Xbox, sin
-USBPcap ni DS4Windows. La variante anterior Console Function Map se conserva
-para integraciones antiguas y no se selecciona desde `xboxone-client`.
-
-La identidad visible sigue siendo propia de VIIPER en PnP, por ejemplo
-`VIIPER Xbox One Controller` o `VIIPER Xbox Series X|S Controller`; que Windows
-use el stack oficial Xbox no elimina esa etiqueta de identificación.
-
-Opciones útiles del cliente:
-
-| Opción | Uso |
-| --- | --- |
-| `--addr` | Dirección de la API VIIPER, normalmente `127.0.0.1:3242`. |
-| `--key-file` | Ruta de la clave autorizada para la sesión Xbox. |
-| `--profile` | `xboxone` o `xboxseries`. |
-| `--bus-id` | Reutiliza un bus existente; si se omite, el cliente crea uno. |
-| `--input-test` | Envía una matriz de botones, sticks, gatillos y estados de entrada. |
-| `--hold-seconds` | Tiempo que mantiene activo cada estado de la prueba. |
-| `--pause-before-activate` | Pausa antes de activar el dispositivo para inspección manual. |
-
-El cliente Xbox registra la identidad, negocia la activación, abre el stream de
-entrada, envía los estados de prueba y elimina exactamente su dispositivo al
-terminar. Si se cierra con `Ctrl+C`, vuelve a ejecutar `server/status` y retira
-el dispositivo retenido antes de iniciar otra prueba.
+Se utiliza la API genérica de creación y stream de VIIPER. El antiguo
+subcomando `xboxone-client` ya no existe y no debe utilizarse.
+Consulta el [plan de reescritura USB/IP](docs/architecture/xboxone-usbip-persona-rewrite-plan.md)
+para el estado y el orden de implementación.
 
 ### 3. Probar todos los mandos y generar un reporte
 
@@ -583,10 +507,9 @@ python scripts/test_all_controllers.py `
   --report .\viiper_controller_test_report_series.md
 ```
 
-Usa `--skip-xboxone` si sólo quieres probar los cuatro dispositivos genéricos,
-`--no-attach` para probar API y streams sin montar USB/IP, o
-`--xboxone-client <ruta>` únicamente si necesitas utilizar un cliente Xbox
-externo heredado. El cliente integrado es la ruta recomendada.
+Usa `--skip-xboxone` si quieres ejecutar únicamente la matriz de los otros
+mandos; los scripts nuevos deben crear `xboxone` o `xboxseries` mediante la API
+genérica.
 
 ### 4. Consultar, reiniciar y cerrar el servicio
 
