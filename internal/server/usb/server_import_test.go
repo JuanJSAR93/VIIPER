@@ -139,24 +139,24 @@ func TestHandleImportEnforcesExclusiveTokenizedDeviceLease(t *testing.T) {
 	server := New(ServerConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	require.NoError(t, server.AddBus(bus))
 
-	first := performTestImport(t, server, "905-1")
+	first := performTestImport(t, server)
 	require.NoError(t, first.err)
 	require.Zero(t, first.status)
 	require.NotNil(t, first.release)
 
-	busy := performTestImport(t, server, "905-1")
+	busy := performTestImport(t, server)
 	require.ErrorContains(t, busy.err, "already imported")
 	require.NotZero(t, busy.status)
 
 	first.release()
-	successor := performTestImport(t, server, "905-1")
+	successor := performTestImport(t, server)
 	require.NoError(t, successor.err)
 	require.Zero(t, successor.status)
 
 	// A duplicated/late cleanup from the retired owner cannot erase the
 	// successor's token.
 	first.release()
-	stillBusy := performTestImport(t, server, "905-1")
+	stillBusy := performTestImport(t, server)
 	require.ErrorContains(t, stillBusy.err, "already imported")
 	require.NotZero(t, stillBusy.status)
 	successor.release()
@@ -205,7 +205,7 @@ type testImportResult struct {
 	err     error
 }
 
-func performTestImport(t *testing.T, server *Server, busID string) testImportResult {
+func performTestImport(t *testing.T, server *Server) testImportResult {
 	t.Helper()
 	serverConn, clientConn := net.Pipe()
 	require.NoError(t, clientConn.SetDeadline(time.Now().Add(time.Second)))
@@ -216,7 +216,7 @@ func performTestImport(t *testing.T, server *Server, busID string) testImportRes
 		_ = serverConn.Close()
 	}()
 	var request [busIDSize]byte
-	copy(request[:], busID)
+	copy(request[:], "905-1")
 	_, err := clientConn.Write(request[:])
 	require.NoError(t, err)
 	var header [8]byte

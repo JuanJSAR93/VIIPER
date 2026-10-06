@@ -80,13 +80,6 @@ func (c *deviceStreamCoordinator) claim(key deviceStreamKey,
 	return c.claimWithPolicy(key, conn, true)
 }
 
-// A production Xbox incarnation has one feedback consumer. A second request
-// may not close that consumer while the retained owner is draining.
-func (c *deviceStreamCoordinator) claimExclusive(key deviceStreamKey,
-	conn net.Conn) *deviceStreamLease {
-	return c.claimWithPolicy(key, conn, false)
-}
-
 func (c *deviceStreamCoordinator) claimWithPolicy(key deviceStreamKey,
 	conn net.Conn, replace bool) *deviceStreamLease {
 	c.mu.Lock()

@@ -125,15 +125,3 @@ func BusDeviceAdd(s *usbs.Server, apiSrv *api.Server) api.HandlerFunc {
 		return nil
 	}
 }
-
-func parseXboxOneBusID(req *api.Request) (uint32, error) {
-	idStr, ok := req.Params["id"]
-	if !ok {
-		return 0, apierror.ErrBadRequest("missing id parameter")
-	}
-	busID, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		return 0, apierror.ErrBadRequest(fmt.Sprintf("invalid busId: %v", err))
-	}
-	return uint32(busID), nil
-}

@@ -353,8 +353,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			busID: uint32(busID), devID: devIDStr, bus: registration.Bus,
 			registrationToken: registration.RegistrationToken,
 		}
-		var lease *deviceStreamLease
-		lease = s.deviceStreams.claim(streamKey, streamConn)
+		lease := s.deviceStreams.claim(streamKey, streamConn)
 		handlerStarted := false
 		defer func() {
 			if !handlerStarted {

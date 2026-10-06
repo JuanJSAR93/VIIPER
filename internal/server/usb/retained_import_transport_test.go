@@ -1188,7 +1188,6 @@ func writeRetainedSubmit(
 	conn net.Conn,
 	sequence, direction, endpoint, length uint32,
 	setup [8]byte,
-	payload []byte,
 ) {
 	t.Helper()
 	command := usbip.CmdSubmit{
@@ -1201,10 +1200,6 @@ func writeRetainedSubmit(
 		Setup:             setup,
 	}
 	require.NoError(t, command.Write(conn))
-	if len(payload) != 0 {
-		_, err := conn.Write(payload)
-		require.NoError(t, err)
-	}
 }
 
 func readRetainedSubmitResponse(
@@ -1268,7 +1263,7 @@ func TestRetainedImportBindsBeforeSuccessAndRoutesInterruptIn(t *testing.T) {
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
 	readSuccessfulRetainedImport(t, client)
 
-	writeRetainedSubmit(t, client, 100, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 100, usbip.DirIn, 1, 64, [8]byte{})
 	sequence, status, actual, _ := readRetainedSubmitResponse(t, client)
 	require.Equal(t, uint32(100), sequence)
 	require.Equal(t, int32(errPipe), status)
@@ -1278,14 +1273,14 @@ func TestRetainedImportBindsBeforeSuccessAndRoutesInterruptIn(t *testing.T) {
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 102, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 102, usbip.DirOut, 0, 0, setConfiguration)
 	sequence, status, actual, _ = readRetainedSubmitResponseForDirection(
 		t, client, usbip.DirOut)
 	require.Equal(t, uint32(102), sequence)
 	require.Zero(t, status)
 	require.Zero(t, actual)
 
-	writeRetainedSubmit(t, client, 101, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 101, usbip.DirIn, 1, 64, [8]byte{})
 	sequence, status, actual, data := readRetainedSubmitResponse(t, client)
 	require.Equal(t, uint32(101), sequence)
 	require.Zero(t, status)
@@ -1454,7 +1449,7 @@ func TestRetainedImportUnsupportedEndpointStallsWithoutOwnerDispatch(t *testing.
 	writeRetainedImportRequest(t, client, "941-1")
 	readSuccessfulRetainedImport(t, client)
 
-	writeRetainedSubmit(t, client, 201, usbip.DirIn, 2, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 201, usbip.DirIn, 2, 64, [8]byte{})
 	sequence, status, actual, _ := readRetainedSubmitResponse(t, client)
 	require.Equal(t, uint32(201), sequence)
 	require.Equal(t, int32(errPipe), status)
@@ -1485,14 +1480,14 @@ func TestRetainedImportRejectedSubmissionCannotDuplicateLiveSequence(t *testing.
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 206, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 206, usbip.DirOut, 0, 0, setConfiguration)
 	readRetainedSubmitResponseForDirection(t, client, usbip.DirOut)
 
-	writeRetainedSubmit(t, client, 207, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 207, usbip.DirIn, 1, 64, [8]byte{})
 	require.Eventually(t, func() bool {
 		return hot.prepareCalls.Load() != 0
 	}, time.Second, time.Millisecond)
-	writeRetainedSubmit(t, client, 207, usbip.DirIn, 2, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 207, usbip.DirIn, 2, 64, [8]byte{})
 
 	var responseByte [1]byte
 	_, readErr := client.Read(responseByte[:])
@@ -1523,9 +1518,9 @@ func TestRetainedDuplicateSequenceIsRejectedAtHeaderBeforeOUTBody(
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 501, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 501, usbip.DirOut, 0, 0, setConfiguration)
 	readRetainedSubmitResponseForDirection(t, client, usbip.DirOut)
-	writeRetainedSubmit(t, client, 502, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 502, usbip.DirIn, 1, 64, [8]byte{})
 	require.Eventually(t, func() bool {
 		return hot.prepareCalls.Load() != 0
 	}, time.Second, time.Millisecond)
@@ -1629,9 +1624,9 @@ func TestRetainedUnlinkCommandCannotDuplicateLiveSubmitSequence(t *testing.T) {
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 210, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 210, usbip.DirOut, 0, 0, setConfiguration)
 	readRetainedSubmitResponseForDirection(t, client, usbip.DirOut)
-	writeRetainedSubmit(t, client, 211, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 211, usbip.DirIn, 1, 64, [8]byte{})
 	require.Eventually(t, func() bool {
 		return hot.prepareCalls.Load() >= 2
 	}, time.Second, time.Millisecond)
@@ -1676,7 +1671,7 @@ func TestRetainedLifecycleReplyFencesPostReplyInterruptSubmission(t *testing.T) 
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 301, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 301, usbip.DirOut, 0, 0, setConfiguration)
 	sequence, status, actual, _ := readRetainedSubmitResponseForDirection(
 		t, client, usbip.DirOut)
 	require.Equal(t, uint32(301), sequence)
@@ -1688,7 +1683,7 @@ func TestRetainedLifecycleReplyFencesPostReplyInterruptSubmission(t *testing.T) 
 		t.Fatal("lifecycle completion did not enter")
 	}
 
-	writeRetainedSubmit(t, client, 302, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 302, usbip.DirIn, 1, 64, [8]byte{})
 	close(completeRelease)
 	sequence, status, actual, data := readRetainedSubmitResponse(t, client)
 	require.Equal(t, uint32(302), sequence)
@@ -1734,7 +1729,7 @@ func TestRetainedPipelinedLifecycleResolvesAgainstDeliveredPredecessorState(t *t
 	setConfiguration := [8]byte{usbReqTypeStandardToDevice,
 		usbReqSetConfiguration, 1, 0, 0, 0, 0, 0}
 	writeRetainedSubmit(
-		t, client, 401, usbip.DirOut, 0, 0, setConfiguration, nil)
+		t, client, 401, usbip.DirOut, 0, 0, setConfiguration)
 	sequence, status, _, _ := readRetainedSubmitResponseForDirection(
 		t, client, usbip.DirOut)
 	require.Equal(t, uint32(401), sequence)
@@ -1747,14 +1742,14 @@ func TestRetainedPipelinedLifecycleResolvesAgainstDeliveredPredecessorState(t *t
 
 	clearHalt := [8]byte{usbReqTypeStandardToEndpoint,
 		usbReqClearFeature, 0, 0, 0x81, 0, 0, 0}
-	writeRetainedSubmit(t, client, 402, usbip.DirOut, 0, 0, clearHalt, nil)
+	writeRetainedSubmit(t, client, 402, usbip.DirOut, 0, 0, clearHalt)
 	close(completeRelease)
 	sequence, status, _, _ = readRetainedSubmitResponseForDirection(
 		t, client, usbip.DirOut)
 	require.Equal(t, uint32(402), sequence)
 	require.Zero(t, status)
 
-	writeRetainedSubmit(t, client, 403, usbip.DirIn, 1, 64, [8]byte{}, nil)
+	writeRetainedSubmit(t, client, 403, usbip.DirIn, 1, 64, [8]byte{})
 	sequence, status, actual, data := readRetainedSubmitResponse(t, client)
 	require.Equal(t, uint32(403), sequence)
 	require.Zero(t, status)

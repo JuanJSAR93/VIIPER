@@ -174,9 +174,9 @@ func validSerialNumber(serial string, deviceID uint64) bool {
 		return false
 	}
 	for _, character := range serial {
-		if !(character >= '0' && character <= '9') &&
-			!(character >= 'a' && character <= 'f') &&
-			!(character >= 'A' && character <= 'F') {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') &&
+			(character < 'A' || character > 'F') {
 			return false
 		}
 	}
