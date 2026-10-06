@@ -6,7 +6,7 @@ const (
 	DefaultPID uint16 = 0x0b12
 
 	Manufacturer = "©Microsoft Corporation"
-	Product      = "VIIPER Xbox Series X|S Controller"
+	Product      = "Xbox Series X|S Controller"
 
 	EndpointIn  uint8 = 0x81
 	EndpointOut uint8 = 0x01

@@ -6,7 +6,7 @@ const (
 	DefaultPID uint16 = 0x02d1
 
 	Manufacturer = "©Microsoft Corporation"
-	Product      = "VIIPER Xbox One Controller"
+	Product      = "Xbox One Controller"
 
 	EndpointIn  uint8 = 0x81
 	EndpointOut uint8 = 0x01
