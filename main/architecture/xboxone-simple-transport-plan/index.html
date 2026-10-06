@@ -23,7 +23,7 @@
     
     
       
-        <title>Exact production Xbox One removal - VIIPER Documentation</title>
+        <title>Plan de implementación: transporte simple Xbox One/Series - VIIPER Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#exact-production-xbox-one-removal" class="md-skip">
+        <a href="#plan-de-implementacion-transporte-simple-xbox-oneseries" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Exact production Xbox One removal
+              Plan de implementación: transporte simple Xbox One/Series
             
           </span>
         </div>
@@ -287,7 +287,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../overview/" class="md-tabs__link">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
@@ -827,7 +827,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
@@ -1590,10 +1590,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#native-activation-retry-policy-september-5-source-follow-up" class="md-nav__link">
+  <a href="#objetivo" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Native activation retry policy (September 5 source follow-up)
+        Objetivo
       
     </span>
   </a>
@@ -1601,10 +1601,275 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#native-activation-cancellation-september-5-source-follow-up" class="md-nav__link">
+  <a href="#alcance" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Native activation cancellation (September 5 source follow-up)
+        Alcance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#estado-actual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Estado actual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modos-de-transporte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modos de transporte
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flujo-simple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flujo simple
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contratos-que-no-se-modifican" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contratos que no se modifican
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Contratos que no se modifican">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GIP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cfbk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CFBK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-cc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API C/C++
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maquina-de-estados" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Máquina de estados
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cola-y-ack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cola y ACK
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporizacion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Temporización
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limpieza-usbip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limpieza USB/IP
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observabilidad" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observabilidad
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fase-1-linea-base" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 1: línea base
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fase-2-abstraccion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 2: abstracción
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fase-3-modo-simple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 3: modo simple
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fase-4-temporizacion-completa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 4: temporización completa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fase-5-validacion-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 5: validación Windows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fase-6-activacion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fase 6: activación
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matriz-minima" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matriz mínima
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#criterios-de-aceptacion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Criterios de aceptación
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reversion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reversión
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resultado-esperado" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resultado esperado
       
     </span>
   </a>
@@ -1631,152 +1896,268 @@
   
 
 
-<h1 id="exact-production-xbox-one-removal">Exact production Xbox One removal</h1>
-<p>The authenticated <code>bus/{id}/add-authorized-xboxone</code> response includes a
-top-level <code>removalToken</code>. It is a fresh 256-bit <code>crypto/rand</code> nonce encoded as
-exactly 64 lowercase hexadecimal characters. This is a creation-only secret:
-it is not in ordinary device listings, descriptors, device-specific arguments,
-input, feedback, or API diagnostics.</p>
-<p>The same creation receipt includes <code>usbipBusId</code>, an independent public
-per-registration export alias, and <code>removalTimeoutMilliseconds</code>, the actual
-normal server close budget rounded upward. The timeout is a positive integer
-at most 300000; unsupported configurations are rejected before production
-creation rather than clamped. The normal CLI default is 90000 milliseconds
-(three times its 30-second connection timeout).</p>
-<p><code>usbipBusId</code> is <code>x1-</code> followed by 26 canonical lowercase unpadded base32
-characters from 16 independent cryptographically random bytes (29 ASCII
-bytes total). Its final character is one of <code>a/e/i/m/q/u/y/4</code>. It is not
-derived from the secret removal token. The immutable alias is installed before
-registration publication, including descriptor admission; aliases already
-reserved by unpublished registrations also fail the collision check.</p>
-<p>USB/IP DEVLIST, IMPORT reply, native Windows attach, and Linux/Windows CLI
-attach all preserve this exact export identity. Protected production imports
-accept no numeric bus-device fallback. Stale aliases therefore cannot select a
-different controller after numeric address reuse, bus reuse, or server restart.
-Numeric USB/IP bus/device fields and the resulting URB transfer device ID are
-unchanged. Generic and explicitly dormant/test registrations remain numeric.</p>
-<p>The production registry binds the nonce once to the unique lifetime channel
-of the successful <code>VirtualBus.Add</code>. Neither numeric address reuse, bus-number
-reuse, server restart, nor re-adding the same device pointer transfers that
-authority. No predictable local counter is used as the secret.</p>
-<p>Send the following over an authenticated API session:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>bus/{busId}/{devId}/remove-authorized-xboxone {"version":1,"removalToken":"&lt;captured 64-character token&gt;"}
+<h1 id="plan-de-implementacion-transporte-simple-xbox-oneseries">Plan de implementación: transporte simple Xbox One/Series</h1>
+<h2 id="objetivo">Objetivo</h2>
+<p>Hacer que Xbox One/Series tenga el mismo ciclo de vida operativo que Xbox 360, DS4, DualSense y NS2P:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>crear → abrir stream → USB/IP attach → mantener → cerrar → retirar
 </code></pre></div>
-<p>The same closed capability payload is required for
-<code>bus/{busId}/{devId}/stream-authorized-xboxone</code> and
-<code>bus/{busId}/{devId}/activate-authorized-xboxone</code>. The former is a NUL-terminated
-stream command followed by unchanged X1BR v1 framing; the latter returns
-<code>version:1</code>, the exact public <code>usbipBusId</code>, a positive <code>usbipPort</code>, and
-<code>usbipOwnerSerial</code> (empty for pinned native 0.9.7.7). Legacy address-only broker
-opening is rejected for Xbox. Duplicate authorized streams cannot displace the
-consumer; activation revalidates both registration and consumer after native
-I/O. Registration leases cover only synchronous lifecycle transitions, never
-network/native I/O or acquisition of the stream-coordinator mutex.</p>
-<p>The request schema is closed and bounded to 256 bytes. Both fields are required;
-unknown fields, duplicate fields, case-folded names, wrong types, unsupported
-versions, noncanonical tokens, and trailing JSON are rejected. Authentication
-is checked before parsing or lookup. The route never echoes token material in
-an error.</p>
-<p>Responses are <code>{"version":1,"removed":true}</code> or
-<code>{"version":1,"removed":false}</code>. A missing/already-gone target or a validly
-formed token which does not authorize the captured incarnation returns false
-without touching any successor. False is not a new proof of neutralization.</p>
-<p>For a matching live incarnation, the server fences further retained stream
-registration for that exact Add, captures and cancels only its existing USB
-streams, and joins their existing retained lifecycle. The feedback consumer
-must remain alive during this request so <code>DisconnectNeutral</code> can receive its
-exact canonical Stop acknowledgement. Only after successful joining does
-the operation complete exact registration removal. A concurrent safe one-shot
-retirement may already have removed that same registration; this still counts
-as true for the closer which captured it live. Concurrent callers may join
-the result or observe that the registration is already gone.</p>
-<p>Rejected/ambiguous feedback, drain or transport failures, and incomplete joins
-return a conflict instead of claiming success. Quarantined owner/admission
-proofs stay with their existing lifecycle owners. The exact close fence cannot
-be reopened by a late stream completion. Normal registration cancellation
-cleans up idle close bookkeeping, including when this API was never called.</p>
-<p>The join budget is the server's existing retained close deadline: normally
-three times <code>ConnectionTimeout</code>, using a five-second lifecycle fallback when
-unset (15 seconds total), or an already-established server shutdown deadline.
-Clients need a compatible bounded response timeout; a client timeout is not
-permission to attempt numeric device, bus, or port cleanup.</p>
-<p>This API does <strong>not</strong> prove that a Windows USB/IP port has been permanently
-detached or that saved-location auto-reattach has been canceled. In pinned
-usbip-win2 0.9.7.7, receiver socket loss can schedule another attach by the
-saved export location. The independent export alias makes such an old retry
-fail lookup instead of selecting a numeric-address successor. No client-side
-numeric port detach is authorized by this behavior. Token-bound broker stream
-and activation admission remain necessary alongside alias-safe USB selection;
-an export alias is public routing identity, not API authentication.</p>
-<h3 id="native-activation-retry-policy-september-5-source-follow-up">Native activation retry policy (September 5 source follow-up)</h3>
-<p>Windows native production Xbox activation now uses pinned 0.9.7.7's
-<code>PLUGIN_HARDWARE_ONCE</code>. The request/response layout, exact export alias and
-positive-port validation are unchanged. If the initial native call fails,
-it must not also schedule a background import after the creation transaction
-has reported failure and rolled back. Legacy numeric exports keep ordinary
-<code>PLUGIN_HARDWARE</code>; no global driver retry setting is changed.</p>
-<p>This operation does <strong>not</strong> cancel reattachment after a successful import later
-loses its broker connection. Source review confirms that receiver teardown
-schedules those requests separately. Exact stale-location retry cancellation
-remains an open cleanup gate; neither a fixed delay nor a saved numeric port
-proves the driver has finished creating its retry work. In particular, calling
-the location-based <code>STOP_ATTACH_ATTEMPTS</code> before that work exists can return
-zero and still be followed by a retry. Do not report such a zero as permanent
-retirement, or use global Stop/Detach All to conceal this gap.</p>
-<p>The five new fake-native call-boundary tests and <code>go test ./...</code> pass. No
-hardware operation is performed by these tests, and the running portable b56
-broker has not been replaced with this source follow-up.</p>
-<h3 id="native-activation-cancellation-september-5-source-follow-up">Native activation cancellation (September 5 source follow-up)</h3>
-<p>Native attach now opens an overlapped driver handle and owns one manual-reset
-completion event, pinned payload and <code>OVERLAPPED</code> structure. Cancellation uses
-<code>CancelIoEx</code> with that exact non-null structure; neither all-handle cancellation
-nor port-number detach is used. The helper observes the operation's actual
-completion and joins any cancellation callback before releasing its event,
-buffer or outer driver handle. Pending/incomplete observations cannot retire
-that storage. A success which wins cancellation retains its returned port as
-evidence; cancellation is not falsely reported as native removal.</p>
-<p>This follows Microsoft's <a href="https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelioex">CancelIoEx contract</a>
-and <a href="https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-getoverlappedresult">GetOverlappedResult completion rules</a>.
-The configured API <code>ConnectionTimeout</code> (30-second fallback when unset/nonpositive)
-requests activation cancellation; it is <strong>not a hard native completion bound</strong>.
-A driver which delays or cannot complete cancellation can still retain the
-in-flight operation. Request/registration cancellation and the deadline prevent
-that operation from subsequently committing a successful activation response.
-The existing API request context does not independently observe a peer closing
-its management socket while the handler is executing; that event alone is not
-claimed as an immediate cancellation source.</p>
-<p>Before native submission, activation rejects an already-canceled request without
-consuming the ready owner. Once reserved, the operation retains its reservation
-through actual native completion and cancellation cleanup. Cancellation removes
-only the captured registration through the existing retained stream drain/Stop
-ACK lifecycle. A reused numeric address cannot select a successor. Incomplete
-cleanup returns conflict and remains fenced, not successful removal. Commit
-revalidates context, exact registration and feedback-consumer readiness. Normal
-non-cancellation attach errors retain the prior same-owner retry policy.</p>
-<p>Six new native-operation tests and five new handler tests cover pending abort,
-late success/ERROR_NOT_FOUND, callback/storage lifetime, malformed responses,
-pre-cancellation, deadline propagation, duplicate activation while cancellation
-is pending, and exact-registration replacement. The prior ABI tests now exercise
-the same production helper; the obsolete synchronous helper was removed.
-<code>go test ./... -count=1</code>, <code>go vet ./...</code>, and ten race-enabled repetitions of
-native/activation regressions pass. These tests use fake native calls and real
-loopback authenticated broker streams, not the installed driver.</p>
-<p>Successful-retired-import retry cleanup is still a distinct open gate. Pinned
-0.9.7.7 handles imported-device queries and retry cancellation on a parallel
-queue, separately from detach/retry creation. Cancellation matches a 32-bit
-location hash (zero selects all), not an opaque native attachment identity.
-Neither observing absence nor canceling zero current retries establishes that
-future retry work cannot appear. No speculative native cleanup operation was
-added. This source is not in the running portable b56 payload.</p>
-<p>When a positive <code>BusCleanupTimeout</code> is configured, creating an initially empty
-bus schedules the same exact bus/empty-incarnation cleanup used after device
-removal. A rejected factory therefore does not require numeric bus deletion by
-the client. Initial zero-timeout embedding behavior remains unchanged.</p>
-<p>Source-backed in-process coverage includes real production broker/retained USB
-Stop ACK success, rejection, wrong correlation, socket loss, late import
-registration, close timeout, duplicate-import Busy isolation, registration
-cleanup, stale address/bus reuse, token isolation, schema validation, and
-concurrent idempotent removal. These tests do not access physical hardware.</p>
+<p>Se conserva la identidad oficial GIP/XGIP, los reportes GIP y los cuatro
+actuadores de feedback. El cambio se limita al ciclo de vida y al manejo de
+errores del transporte.</p>
+<h2 id="alcance">Alcance</h2>
+<p>Incluye:</p>
+<ul>
+<li>Transporte simple opcional para Xbox One y Xbox Series X|S.</li>
+<li>Una única sesión por <code>busId/devId</code>.</li>
+<li>Entrada y feedback coordinados.</li>
+<li>Errores de feedback aislados de la vida USB/IP.</li>
+<li>Neutral seguro ante pérdida temporal de ACK.</li>
+<li>Limpieza determinista de stream, attach y bus.</li>
+<li>Diagnóstico de conexión, ACK, TTL y desconexión.</li>
+</ul>
+<p>No incluye:</p>
+<ul>
+<li>Cambiar VID/PID, descriptor GIP o identidad Xbox.</li>
+<li>Modificar Xbox 360, DS4, DualSense o NS2P.</li>
+<li>Eliminar inicialmente el broker persistente existente.</li>
+<li>Cambiar <code>CFBK v1</code>.</li>
+<li>Convertir GIP en HID/XUSB.</li>
+</ul>
+<h2 id="estado-actual">Estado actual</h2>
+<p>Ya existen <code>RumbleBodyV1</code>, el ejecutor temporal, la renovación de TTL,
+secuencias CFBK y ACK del broker. El plan debe reutilizarlos y no duplicarlos.</p>
+<p>La primera fase del modo <code>simple</code> ya está implementada: el stream sigue siendo
+full-duplex y autenticado, pero la entrega de feedback se considera confirmada
+cuando llega al stream, sin depender del ACK externo del modo <code>broker</code>. Si el
+feedback falla, se publica entrada neutral y se conserva la persona USB/IP.
+El modo <code>broker</code> continúa siendo el predeterminado y conserva su política
+fail-closed.</p>
+<h2 id="modos-de-transporte">Modos de transporte</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>xboxone-transport=broker   # modo actual, predeterminado inicialmente
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>xboxone-transport=simple   # nuevo modo compatible
+</code></pre></div>
+<p>El modo simple será opt-in durante la validación. El modo broker seguirá
+disponible como fallback.</p>
+<h2 id="flujo-simple">Flujo simple</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cliente autenticado
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  → crear bus/persona Xbox
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  → abrir sesión full-duplex
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  → activar USB/IP
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  → publicar entrada semántica
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  → recibir Direct Motor GIP
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  → entregar feedback al cliente
+</code></pre></div>
+<p>El parser GIP solo interpreta bytes. No gestiona sockets, TTL ni cierres.</p>
+<h2 id="contratos-que-no-se-modifican">Contratos que no se modifican</h2>
+<h3 id="gip">GIP</h3>
+<p>Se mantienen:</p>
+<ul>
+<li>Mensaje Direct Motor número 9.</li>
+<li>Cuerpo de 9 bytes.</li>
+<li>Niveles 0..100.</li>
+<li><code>duration</code>, <code>delay</code> y <code>repeat</code>.</li>
+<li>Mapeo de motores y gatillos.</li>
+</ul>
+<h3 id="cfbk">CFBK</h3>
+<p>Si el modo simple usa CFBK, conserva el frame completo de 72 bytes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>BodyLow      → vibración izquierda
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>BodyHigh     → vibración derecha
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>LeftTrigger  → impulso izquierdo
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>RightTrigger → impulso derecho
+</code></pre></div>
+<p>No se sustituye por dos bytes de motor.</p>
+<h3 id="api-cc">API C/C++</h3>
+<p>No se cambia la firma de <code>XboxOneOutputCallback</code>.</p>
+<h2 id="maquina-de-estados">Máquina de estados</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Created → StreamOpening → Attached → Active
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>                                      ├─ FeedbackPending
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>                                      ├─ FeedbackInFlight
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>                                      ├─ Neutralizing
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>                                      └─ Closing
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>Closed / Quarantined
+</code></pre></div>
+<p>Reglas:</p>
+<ul>
+<li>Un fallo temporal de feedback no cierra directamente USB/IP.</li>
+<li>ACK perdido produce Neutral.</li>
+<li>Neutral mantiene el mando conectado.</li>
+<li>Stop se reserva para desconexión definitiva.</li>
+<li>Una generación anterior nunca publica sobre una sesión nueva.</li>
+<li>Solo una rutina es propietaria del cierre final.</li>
+</ul>
+<h2 id="cola-y-ack">Cola y ACK</h2>
+<p>La cola tendrá como máximo:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>frame en vuelo: 0 o 1
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>frame pendiente: 0 o 1
+</code></pre></div>
+<p>Una orden nueva reemplaza el estado pendiente. No se acumulan vibraciones
+obsoletas.</p>
+<p>Secuencia:</p>
+<ol>
+<li>Publicar un frame.</li>
+<li>Esperar ACK o expiración.</li>
+<li>Validar correlación y generación.</li>
+<li>Liberar el frame en vuelo.</li>
+<li>Publicar el último frame pendiente.</li>
+</ol>
+<p>ACK duplicados o fuera de orden se registran e ignoran, salvo que indiquen una
+sesión inválida.</p>
+<h2 id="temporizacion">Temporización</h2>
+<ul>
+<li><code>duration</code> permanece en el ejecutor temporal.</li>
+<li>Las renovaciones usan una secuencia nueva.</li>
+<li>Nunca se extiende una orden más allá de su duración absoluta.</li>
+<li><code>delay</code> se implementa localmente:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Neutral durante delay → Apply durante duration → repetición → Neutral final
+</code></pre></div>
+<p>Si <code>delay</code> aún no está implementado, debe rechazarse explícitamente.</p>
+<h2 id="limpieza-usbip">Limpieza USB/IP</h2>
+<p>La secuencia debe ser idempotente:</p>
+<ol>
+<li>Detener nuevas entradas y feedback.</li>
+<li>Cancelar renovadores.</li>
+<li>Publicar Neutral si el canal sigue válido.</li>
+<li>Cerrar el stream.</li>
+<li>Retirar el attach actual.</li>
+<li>Liberar el registro.</li>
+<li>Eliminar el bus solo si pertenece a la sesión.</li>
+</ol>
+<p>Nunca se reutiliza un <code>usbipBusId</code> antiguo. Cada <code>x1-*</code> es válido solo para
+su registro actual.</p>
+<h2 id="observabilidad">Observabilidad</h2>
+<p>Registrar por sesión:</p>
+<ul>
+<li><code>busId</code>, <code>devId</code>, perfil y <code>usbipBusId</code>.</li>
+<li>Transiciones de estado y motivo de cierre.</li>
+<li>Secuencia, generación y comando CFBK.</li>
+<li>ACK aceptado, rechazado, duplicado o fuera de orden.</li>
+<li>Tiempo de publicación a ACK.</li>
+<li>Renovaciones.</li>
+<li>Errores de importación USB/IP.</li>
+</ul>
+<h2 id="fases">Fases</h2>
+<h3 id="fase-1-linea-base">Fase 1: línea base</h3>
+<ul>
+<li>Prueba neutral durante 60 segundos.</li>
+<li>Vibración sostenida durante más de 250 ms.</li>
+<li>ACK perdido, duplicado y fuera de orden.</li>
+<li>Tres ciclos limpios sin buses previos.</li>
+</ul>
+<h3 id="fase-2-abstraccion">Fase 2: abstracción</h3>
+<ul>
+<li>Crear una interfaz interna de abrir/mantener/cerrar.</li>
+<li>Adaptar el broker actual sin cambiar su semántica.</li>
+<li>Centralizar la limpieza.</li>
+<li>Mantener la API pública.</li>
+</ul>
+<h3 id="fase-3-modo-simple">Fase 3: modo simple</h3>
+<ul>
+<li>Añadir sesión full-duplex.</li>
+<li>Reutilizar parser GIP, <code>RumbleBodyV1</code> y ejecutor temporal.</li>
+<li>Añadir cola de último estado.</li>
+<li>Aislar fallos de ACK del cierre USB/IP.</li>
+</ul>
+<h3 id="fase-4-temporizacion-completa">Fase 4: temporización completa</h3>
+<ul>
+<li>Implementar <code>delay</code>.</li>
+<li>Validar <code>duration</code> y <code>repeat</code>.</li>
+<li>Verificar límites absolutos y renovaciones.</li>
+</ul>
+<h3 id="fase-5-validacion-windows">Fase 5: validación Windows</h3>
+<ul>
+<li><code>joy.cpl</code> durante 60 segundos.</li>
+<li><code>XInputGetState</code> durante 60 segundos.</li>
+<li>Vibración izquierda, derecha y simultánea.</li>
+<li>Neutral, Stop, reconexión y pérdida de ACK.</li>
+<li>Verificar que no queden buses huérfanos.</li>
+</ul>
+<h3 id="fase-6-activacion">Fase 6: activación</h3>
+<ul>
+<li>Mantener broker como valor predeterminado.</li>
+<li>Activar simple en el cliente de diagnóstico.</li>
+<li>Comparar estabilidad y latencia.</li>
+<li>Cambiar el valor predeterminado solo después de superar los criterios.</li>
+</ul>
+<h2 id="matriz-minima">Matriz mínima</h2>
+<table>
+<thead>
+<tr>
+<th>Prueba</th>
+<th>Resultado</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Neutral 60 s</td>
+<td>Sin desconexión</td>
+</tr>
+<tr>
+<td>Vibración izquierda/derecha</td>
+<td>Canal correcto</td>
+</tr>
+<tr>
+<td>Cuatro actuadores</td>
+<td>Valores independientes</td>
+</tr>
+<tr>
+<td>Vibración sostenida</td>
+<td>Renovación sin caída</td>
+</tr>
+<tr>
+<td><code>duration=0</code></td>
+<td>Neutral inmediato</td>
+</tr>
+<tr>
+<td><code>delay&gt;0</code></td>
+<td>Sin vibración prematura</td>
+</tr>
+<tr>
+<td>ACK perdido</td>
+<td>Neutral y mando conectado</td>
+</tr>
+<tr>
+<td>ACK duplicado</td>
+<td>Ignorado sin cierre</td>
+</tr>
+<tr>
+<td>Reconexión</td>
+<td>Nueva generación</td>
+</tr>
+<tr>
+<td>Cierre normal</td>
+<td>Sin bus huérfano</td>
+</tr>
+<tr>
+<td>Xbox One/Series</td>
+<td>Misma ruta, identidad distinta</td>
+</tr>
+</tbody>
+</table>
+<h2 id="criterios-de-aceptacion">Criterios de aceptación</h2>
+<ul>
+<li>Diez ciclos consecutivos sin desconexión inesperada.</li>
+<li>Cinco minutos conectado.</li>
+<li>Vibración alternada durante 60 segundos.</li>
+<li>Ningún import de <code>usbipBusId</code> antiguo.</li>
+<li><code>joy.cpl</code> y XInput mantienen el mando visible.</li>
+<li>Los otros mandos no cambian su comportamiento.</li>
+<li>El modo broker actual sigue pasando sus pruebas.</li>
+</ul>
+<h2 id="reversion">Reversión</h2>
+<p>Si falla el modo simple:</p>
+<ol>
+<li>Desactivar <code>xboxone-transport=simple</code>.</li>
+<li>Volver a <code>broker</code>.</li>
+<li>Conservar logs y <code>devId</code>.</li>
+<li>No reutilizar generación ni <code>usbipBusId</code> fallidos.</li>
+<li>Corregir el modo simple sin tocar otros dispositivos.</li>
+</ol>
+<h2 id="resultado-esperado">Resultado esperado</h2>
+<p>Desde el punto de vista del usuario, Xbox One/Series se conecta, permanece
+visible y se desconecta como los demás mandos. Internamente conserva GIP/XGIP,
+pero un error temporal de feedback no elimina por sí solo el dispositivo
+USB/IP.</p>
 
 
 
